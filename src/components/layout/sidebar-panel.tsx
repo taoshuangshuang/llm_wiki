@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { PanelLeftClose } from "lucide-react"
 import { KnowledgeTree } from "./knowledge-tree"
 import { FileTree } from "./file-tree"
+import { BusinessModuleTree } from "@/features/business-modules/business-module-tree"
 
 interface SidebarPanelProps {
   onCollapse?: () => void
@@ -10,7 +11,7 @@ interface SidebarPanelProps {
 
 export function SidebarPanel({ onCollapse }: SidebarPanelProps) {
   const { t } = useTranslation()
-  const [mode, setMode] = useState<"knowledge" | "files">("knowledge")
+  const [mode, setMode] = useState<"knowledge" | "files" | "modules">("knowledge")
 
   return (
     <div className="flex h-full flex-col">
@@ -35,6 +36,17 @@ export function SidebarPanel({ onCollapse }: SidebarPanelProps) {
         >
           {t("sidebar.files")}
         </button>
+        <button
+          type="button"
+          onClick={() => setMode("modules")}
+          className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${
+            mode === "modules"
+              ? "border-b-2 border-primary text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {t("sidebar.businessModules")}
+        </button>
         {onCollapse && (
           <button
             type="button"
@@ -48,7 +60,7 @@ export function SidebarPanel({ onCollapse }: SidebarPanelProps) {
         )}
       </div>
       <div className="flex-1 overflow-hidden">
-        {mode === "knowledge" ? <KnowledgeTree /> : <FileTree />}
+        {mode === "knowledge" ? <KnowledgeTree /> : mode === "modules" ? <BusinessModuleTree /> : <FileTree />}
       </div>
     </div>
   )

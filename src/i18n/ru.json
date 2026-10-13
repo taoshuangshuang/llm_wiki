@@ -42,6 +42,11 @@
     "recentProjects": "Недавние проекты"
   },
   "sidebar": {
+    "businessModules": "Бизнес-модули",
+    "moduleLoading": "Загрузка модулей…",
+    "moduleSetup": "Добавьте в schema.md раздел Business Modules со словарём модулей JSON.",
+    "moduleEmpty": "В этом модуле пока нет страниц.",
+    "moduleUnreadable": "Не удалось прочитать {{count}} элементов вики.",
     "knowledge": "Знания",
     "files": "Файлы",
     "rawSources": "Исходные источники",

@@ -42,6 +42,11 @@
     "recentProjects": "Progetti recenti"
   },
   "sidebar": {
+    "businessModules": "Moduli aziendali",
+    "moduleLoading": "Caricamento dei moduli…",
+    "moduleSetup": "Aggiungi a schema.md una sezione Business Modules con un dizionario JSON dei moduli.",
+    "moduleEmpty": "Nessuna pagina in questo modulo.",
+    "moduleUnreadable": "Impossibile leggere {{count}} elementi wiki.",
     "knowledge": "Conoscenza",
     "files": "File",
     "rawSources": "Fonti grezze",

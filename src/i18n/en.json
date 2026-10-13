@@ -42,6 +42,11 @@
     "recentProjects": "Recent Projects"
   },
   "sidebar": {
+    "businessModules": "Business modules",
+    "moduleLoading": "Loading modules…",
+    "moduleSetup": "Add a Business Modules section with a JSON module dictionary to schema.md.",
+    "moduleEmpty": "No pages in this module.",
+    "moduleUnreadable": "Could not read {{count}} wiki entries.",
     "knowledge": "Knowledge",
     "files": "Files",
     "rawSources": "Raw Sources",

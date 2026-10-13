@@ -42,6 +42,11 @@
     "recentProjects": "最近项目"
   },
   "sidebar": {
+    "businessModules": "业务模块",
+    "moduleLoading": "正在读取业务模块…",
+    "moduleSetup": "请在 schema.md 的 Business Modules 章节配置 JSON 模块字典。",
+    "moduleEmpty": "此模块暂无页面。",
+    "moduleUnreadable": "有 {{count}} 个 Wiki 项无法读取。",
     "knowledge": "知识库",
     "files": "文件",
     "rawSources": "原始资料",

@@ -387,6 +387,7 @@ import {
   loadProjectWikiSchemaRouting,
   validateWikiPageRouting,
 } from "@/lib/wiki-schema"
+import { createModuleTagWriter, refreshCachedModuleTags } from "@/features/business-modules/classification"
 import { resolveIngestReasoning } from "@/lib/reasoning-capabilities"
 
 // Legacy export kept for backward compatibility with existing diagnostic
@@ -907,9 +908,14 @@ async function autoIngestImpl(
           err instanceof Error ? err.message : err,
         )
       }
+      const moduleRefresh = await refreshCachedModuleTags(pp, cachedFiles, llmConfig, signal, onFileWritten)
+      if (moduleRefresh.updated > 0) await refreshProjectFileTree(pp, { bumpDataVersion: true })
+      if (moduleRefresh.warnings.length) await appendIngestWarningLog(pp, sourceIdentity, moduleRefresh.warnings)
       activity.updateItem(activityId, {
         status: "done",
-        detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
+        detail: moduleRefresh.updated > 0
+          ? `Source unchanged — refreshed module labels on ${moduleRefresh.updated} pages`
+          : `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
         filesWritten: cachedFiles,
       })
       return cachedFiles
@@ -1447,7 +1453,10 @@ async function autoIngestImpl(
     const date = new Date().toISOString().slice(0, 10)
     const fallbackContent = buildFallbackSourceSummary(sourceIdentity, analysis, date)
     try {
-      await writeFile(sourceSummaryFullPath, fallbackContent)
+      const classifyModuleTags = await createModuleTagWriter(pp, llmConfig, signal)
+      const classified = await classifyModuleTags(fallbackContent)
+      if (classified.warnings.length) await appendIngestWarningLog(pp, sourceIdentity, classified.warnings)
+      await writeFile(sourceSummaryFullPath, classified.content)
       writtenPaths.push(sourceSummaryPath)
       onFileWritten?.(sourceSummaryPath)
     } catch {
@@ -2046,6 +2055,7 @@ async function writeFileBlocks(
   // instead of replaying the partial result forever.
   const hardFailures: string[] = []
   const projectSchemaRouting = await loadProjectWikiSchemaRouting(projectPath)
+  const classifyModuleTags = await createModuleTagWriter(projectPath, llmConfig, signal)
 
   const targetLang = useWikiStore.getState().outputLanguage
   const today = currentWikiDate()
@@ -2195,7 +2205,9 @@ async function writeFileBlocks(
         // The merge unions existing frontmatter arrays, so sanitize again to
         // remove legacy/generated paths that may already be stored on disk.
         const toWrite = canonicalizeSourcesField(merged, sourceFileName)
-        await writeFile(fullPath, toWrite)
+        const classified = await classifyModuleTags(toWrite)
+        warnings.push(...classified.warnings.map((warning) => `${relativePath}: ${warning}`))
+        await writeFile(fullPath, classified.content)
       }
       writtenPaths.push(relativePath)
       completedInputPaths.push(rawRelativePath)
