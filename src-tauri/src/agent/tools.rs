@@ -448,7 +448,7 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wiki.read_page".to_string(),
-            description: "Read a project wiki markdown page by project-relative path.".to_string(),
+            description: "Read a project wiki Markdown page using its exact project-relative path from search results or attached files. Do not infer directories from page titles or types.".to_string(),
             effects: vec![ToolEffect::Read],
             parameters: Some(serde_json::json!({
                 "type": "object",
@@ -541,7 +541,7 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Project-relative path such as wiki/queries/new-page.md"
+                        "description": "项目相对路径，例如 wiki/queries/new-page.md。文件名和目录名禁止英文单引号、双引号及控制或不可见字符；去除 wiki/ 和 .md 后最多 256 个 Unicode 字符。标题和正文可以保留引号，链接使用实际文件名。"
                     },
                     "content": { "type": "string" },
                     "allowOverwrite": {
@@ -724,6 +724,7 @@ fn write_wiki_page_with_activity(
         return Err("wiki.write_page refuses to overwrite a symlink".to_string());
     }
     let existed_before = path.is_file();
+    let _approval = crate::commands::file_approval::guard_mutation(&path, Some(content.as_bytes()), "wiki.write_page")?;
     let previous_bytes = existed_before
         .then(|| fs::read(&path))
         .transpose()
@@ -846,6 +847,7 @@ fn write_workspace_file(
     }
     let existed_before = path.is_file();
     let previous_content = workspace_rollback_snapshot(&path);
+    let _approval = crate::commands::file_approval::guard_mutation(&path, Some(content.as_bytes()), "workspace.write_file")?;
     crate::commands::file_history::record_file_version(
         &path,
         "baseline",
@@ -880,6 +882,7 @@ fn append_workspace_file(
     }
     let existed_before = path.is_file();
     let previous_content = workspace_rollback_snapshot(&path);
+    let _approval = crate::commands::file_approval::guard_append(&path, content.as_bytes())?;
     crate::commands::file_history::record_file_version(
         &path,
         "baseline",
@@ -2431,7 +2434,13 @@ pub fn read_wiki_page(project_path: &str, rel_path: &str) -> Result<String, Stri
         return Err("wiki.read_page path must stay under wiki/".to_string());
     }
     let path = safe_project_join(project_path, &rel)?;
-    let meta = fs::metadata(&path).map_err(|err| format!("Failed to read page metadata: {err}"))?;
+    let meta = fs::metadata(&path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            missing_wiki_page_error(project_path, &rel)
+        } else {
+            format!("Failed to read page metadata for {rel}: {err}")
+        }
+    })?;
     if !meta.is_file() {
         return Err("wiki.read_page path is not a file".to_string());
     }
@@ -2439,6 +2448,34 @@ pub fn read_wiki_page(project_path: &str, rel_path: &str) -> Result<String, Stri
         return Err("wiki.read_page file is too large".to_string());
     }
     fs::read_to_string(path).map_err(|err| format!("Failed to read wiki page: {err}"))
+}
+
+/// 只列举磁盘上真实存在的同名候选，不自动换页读取，避免目录猜错后误用其他页面。
+fn missing_wiki_page_error(project_path: &str, rel: &str) -> String {
+    let mut error = format!(
+        "wiki.read_page page not found: {rel}. No page content was read. Use exact paths from wiki.search or attached files; do not infer directories from titles or page types."
+    );
+    let Some(filename) = Path::new(rel).file_name() else {
+        return error;
+    };
+    let candidates: BTreeSet<String> = WalkDir::new(Path::new(project_path).join("wiki"))
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .filter_map(Result::ok)
+        .take(MAX_GRAPH_SEARCH_FILES)
+        .filter(|entry| entry.file_type().is_file() && entry.file_name() == filename)
+        .filter(|entry| ensure_project_bound_path(project_path, entry.path()).is_ok())
+        .map(|entry| relative_to_project(project_path, entry.path()))
+        .collect();
+    if !candidates.is_empty() {
+        error.push_str("\nExisting pages with the same filename (not yet read):");
+        for candidate in candidates.iter().take(5) {
+            error.push_str(&format!("\n- {candidate}"));
+        }
+        error.push_str("\nRetry wiki.read_page with the correct existing path. Do not create or move a page merely to satisfy a failed read.");
+    }
+    error
 }
 
 pub fn search_graph(
@@ -2744,14 +2781,20 @@ fn normalize_wiki_write_path(path: &str) -> Result<String, String> {
     for segment in rel.split('/') {
         validate_portable_path_segment(segment)?;
     }
+    // 生成页面必须同时满足索引的 ID 约定，不能等到重建时才失败。
+    crate::commands::vectorstore::validate_page_id_for_v2(&rel[5..rel.len() - 3])
+        .map_err(|reason| format!("wiki.write_page 文件名无法建立索引：{reason}；请修改名称，正文不受限制"))?;
     Ok(rel)
 }
 
 fn normalize_workspace_write_path(path: &str) -> Result<String, String> {
     let rel = normalize_rel_path(path);
     let lower = rel.to_ascii_lowercase();
+    // Wiki 页面必须经过 Wiki 写入链路，不能变成工作区副本；明确给出纠正方式。
+    if lower.starts_with("wiki/") {
+        return Err("workspace.write_file cannot write Wiki pages. Use wiki.write_page with a project-relative path under wiki/, complete Markdown content, and allowOverwrite=true only for a user-authorized update of an existing page. Do not write a copy under agent-workspace.".to_string());
+    }
     if rel.is_empty()
-        || lower.starts_with("wiki/")
         || lower.starts_with("raw/")
         || lower.split('/').any(|segment| segment.starts_with('.'))
     {
@@ -2942,6 +2985,32 @@ mod tests {
     fn read_wiki_page_rejects_traversal() {
         let err = read_wiki_page("/tmp/project", "../secret.md").unwrap_err();
         assert!(err.contains("wiki.read_page"));
+    }
+
+    /// 页面存在但目录猜错时，应返回准确候选路径，不能把其他页面内容冒充请求结果。
+    #[test]
+    fn read_wiki_page_missing_path_reports_existing_filename_candidates() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-missing-page-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki/integrations")).unwrap();
+        let filename = "YPD应用构建六步接入指引.md";
+        let requested = format!("wiki/designs/{filename}");
+        let actual = format!("wiki/integrations/{filename}");
+        let content = "# 页面原文\n不能将候选内容冒充已读取的请求结果。";
+        fs::write(root.join(&actual), content).unwrap();
+
+        let error = read_wiki_page(root.to_str().unwrap(), &requested).unwrap_err();
+        let actual_content = read_wiki_page(root.to_str().unwrap(), &actual).unwrap();
+        let unknown_error = read_wiki_page(root.to_str().unwrap(), "wiki/designs/不存在.md").unwrap_err();
+        fs::remove_dir_all(root).unwrap();
+
+        assert!(error.contains(&requested), "应指出失败的具体路径：{error}");
+        assert!(error.contains(&actual), "应列出真实同名文件：{error}");
+        assert!(error.contains("Retry wiki.read_page"));
+        assert!(!error.contains(content));
+        assert_eq!(actual_content, content);
+        assert!(unknown_error.contains("wiki/designs/不存在.md"));
+        assert!(unknown_error.contains("wiki.search"));
+        assert!(!unknown_error.contains(&actual), "不能把无关页面当作候选");
     }
 
     #[test]
@@ -3311,6 +3380,32 @@ mod tests {
             .unwrap_err()
             .contains("not available"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn write_wiki_page_rejects_unindexable_names_before_creating_files() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-indexable-write-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        // 使用真实写页入口，确认非法名称不会留下文件，正文引号仍然允许。
+        for name in ["Can't", "zero\u{200b}width", &"x".repeat(257)] {
+            let rel = format!("wiki/{name}.md");
+            let error = write_wiki_page_with_options(root.to_str().unwrap(), &rel, "正文", false)
+                .unwrap_err();
+            assert!(error.contains("无法建立索引"));
+            assert!(!root.join(&rel).exists());
+        }
+        write_wiki_page_with_options(
+            root.to_str().unwrap(),
+            "wiki/cant.md",
+            "# Can't find attribute",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("wiki/cant.md")).unwrap(),
+            "# Can't find attribute"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

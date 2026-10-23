@@ -104,7 +104,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
 
   return (
     <div
-      className="prose prose-invert min-w-0 max-w-none"
+      className="markdown-document prose prose-invert min-w-0 max-w-none"
       dir={direction}
       lang={htmlLang}
       style={{ textAlign: "start" }}
@@ -137,7 +137,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           h1: ({ node, children, ...props }) => (
             <h1
               {...sourceAttrs(node)}
-              className="mb-4 mt-0 border-b border-border/60 pb-3 text-3xl font-semibold leading-tight tracking-normal text-foreground"
+              className="mb-4 mt-0 border-b border-border/60 pb-3 text-[1.875em] font-semibold leading-tight tracking-normal text-foreground"
               {...props}
             >
               {children}
@@ -146,7 +146,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           h2: ({ node, children, ...props }) => (
             <h2
               {...sourceAttrs(node)}
-              className="mb-3 mt-8 border-b border-border/40 pb-2 text-2xl font-semibold leading-tight tracking-normal text-foreground"
+              className="mb-3 mt-8 border-b border-border/40 pb-2 text-[1.5em] font-semibold leading-tight tracking-normal text-foreground"
               {...props}
             >
               {children}
@@ -155,7 +155,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           h3: ({ node, children, ...props }) => (
             <h3
               {...sourceAttrs(node)}
-              className="mb-2 mt-6 text-xl font-semibold leading-snug tracking-normal text-foreground"
+              className="mb-2 mt-6 text-[1.25em] font-semibold leading-snug tracking-normal text-foreground"
               {...props}
             >
               {children}

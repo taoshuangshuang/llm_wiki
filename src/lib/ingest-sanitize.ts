@@ -93,6 +93,45 @@ export function sanitizeIngestedFileContent(content: string): string {
 }
 
 export function normalizeMalformedWikilinks(content: string): string {
+  return mapWikiBodyText(content, normalizeMalformedLinkSegment)
+}
+
+/** 将可唯一定位的笔记引用统一为实际文件名；保留别名、锚点和无法消歧的原始引用。 */
+export function normalizeWikiFileLinks(
+  content: string, knownPaths: readonly string[], titles: ReadonlyMap<string, string> = new Map(),
+): string {
+  const canonicalPath = (path: string) => path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "").replace(/^wiki\//, "").replace(/\.md$/i, "")
+  const paths = new Set(knownPaths.filter((path) => /\.md$/i.test(path)).map(canonicalPath))
+  const names = new Map<string, string[]>()
+  for (const path of paths) {
+    const name = path.slice(path.lastIndexOf("/") + 1)
+    names.set(name, [...(names.get(name) ?? []), path])
+  }
+  const resolve = (reference: string): string | undefined => {
+    const path = canonicalPath(reference)
+    if (paths.has(path) || (!path.includes("/") && names.has(path))) return path
+    const titlePath = titles.get(reference)
+    return titlePath ? canonicalPath(titlePath) : undefined
+  }
+  return mapWikiBodyText(content, (segment) => segment.replace(
+    /(?<!!)\[\[([^\]\n|]+)(\|[^\]\n]*)?\]\]/g,
+    (match, target: string, alias: string = "") => {
+      // 文件名本身可以包含 #；优先完整匹配，再尝试将 # 后的内容解释为锚点。
+      const full = resolve(target.trim())
+      const hash = target.indexOf("#")
+      const reference = hash >= 0 ? target.slice(0, hash).trim() : target.trim()
+      const path = full ?? resolve(reference)
+      if (!path) return match
+      const name = path.slice(path.lastIndexOf("/") + 1)
+      if (names.get(name)?.length !== 1) return match
+      const anchor = full || hash < 0 ? "" : target.slice(hash)
+      return `[[${name}${anchor}${alias}]]`
+    },
+  ))
+}
+
+/** 仅转换正文普通文本，跳过 frontmatter、代码、数学公式与媒体示例。 */
+function mapWikiBodyText(content: string, transform: (segment: string) => string): string {
   const bom = content.startsWith("\uFEFF") ? "\uFEFF" : ""
   const withoutBom = content.slice(bom.length)
   const frontmatter = withoutBom.match(
@@ -134,24 +173,24 @@ export function normalizeMalformedWikilinks(content: string): string {
     const indented = /^(?: {4}|\t)/.test(lineContent)
     const nestedList = /^(?: {4}|\t)(?:[-+*]|\d+[.)])\s+/.test(lineContent)
     if (indented && !nestedList) return line
-    return normalizeMalformedLinksOutsideInlineCode(line)
+    return mapOutsideInlineCode(line, transform)
   })
   return `${prefix}${normalized}`
 }
 
-function normalizeMalformedLinksOutsideInlineCode(text: string): string {
+function mapOutsideInlineCode(text: string, transform: (segment: string) => string): string {
   let output = ""
   let cursor = 0
   while (cursor < text.length) {
     const opening = text.indexOf("`", cursor)
-    if (opening < 0) return output + normalizeMalformedLinkSegment(text.slice(cursor))
-    output += normalizeMalformedLinkSegment(text.slice(cursor, opening))
+    if (opening < 0) return output + transform(text.slice(cursor))
+    output += transform(text.slice(cursor, opening))
     let runEnd = opening + 1
     while (text[runEnd] === "`") runEnd++
     const delimiter = text.slice(opening, runEnd)
     const closing = text.indexOf(delimiter, runEnd)
     if (closing < 0) {
-      output += normalizeMalformedLinkSegment(text.slice(opening, runEnd))
+      output += transform(text.slice(opening, runEnd))
       cursor = runEnd
       continue
     }

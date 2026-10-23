@@ -14,6 +14,16 @@ function config(provider: LlmConfig["provider"], model: string): LlmConfig {
 }
 
 describe("reasoning capabilities", () => {
+  it("官方 GLM-5.3 按能力映射旧设置，并保留用户要求的较高思考预算", () => {
+    const cfg = { ...config("custom", "GLM-5.3"), customEndpoint: "https://open.bigmodel.cn/api/paas/v4" }
+    expect(resolveReasoningCapabilities(cfg).modes).toEqual(["auto", "low", "high", "max"])
+    expect(normalizeReasoningForProvider(cfg, { mode: "off" })).toEqual({ mode: "low" })
+    expect(normalizeReasoningForProvider(cfg, { mode: "medium" })).toEqual({ mode: "high" })
+    expect(normalizeReasoningForProvider(cfg, { mode: "custom", budgetTokens: 2048 })).toEqual({ mode: "low" })
+    expect(normalizeReasoningForProvider(cfg, { mode: "custom", budgetTokens: 4096 })).toEqual({ mode: "high" })
+    expect(normalizeReasoningForProvider(cfg, { mode: "custom", budgetTokens: 8192 })).toEqual({ mode: "max" })
+  })
+
   it("does not infer vendor-private controls from a custom gateway model name", () => {
     const cfg = config("custom", "Qwen3-thinking-only")
     expect(resolveReasoningCapabilities(cfg).modes).toEqual(["auto"])

@@ -14,8 +14,10 @@ import { useLintStore } from "@/stores/lint-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useReviewChatStore } from "@/stores/review-chat-store"
 
 export async function resetProjectState(): Promise<void> {
+  useReviewChatStore.getState().close()
   // Zustand stores — clear all per-project data (synchronous)
   const globalLlmConfig = useWikiStore.getState().globalLlmConfig
   useWikiStore.setState({
@@ -30,6 +32,7 @@ export async function resetProjectState(): Promise<void> {
     ingestSource: null,
     isStreaming: false,
     streamingContent: "",
+    conversationStreams: {},
     useWebSearch: false,
     useAnyTxtSearch: false,
     agentMode: "standard",

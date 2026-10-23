@@ -1617,6 +1617,23 @@ describe("embedAllPages", () => {
     expect(pageIds).toEqual(["rope", "sub/attention"])
   })
 
+  it.each(["Can't find attribute", "zero\u200bwidth", "x".repeat(257)])(
+    "重建发现不可索引的页面名称时保留旧索引：%s", async (name) => {
+      // 即使存在合法页面，也要在调用模型或清空、写入向量之前完成全量预检。
+      listDirectoryMock.mockResolvedValueOnce([
+        ...makeTree(),
+        { name: `${name}.md`, path: `/proj/wiki/${name}.md`, is_dir: false },
+      ])
+      readFileMock.mockResolvedValue("# Title\n\nBody.")
+      mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+
+      await expect(embedAllPages("/proj", cfg, undefined, { clearExisting: true }))
+        .rejects.toThrow("Existing index was left unchanged")
+      expect(readFileMock).not.toHaveBeenCalled()
+      expect(mockInvoke).not.toHaveBeenCalled()
+    },
+  )
+
   it("clears the chunk table before a forced rebuild", async () => {
     listDirectoryMock.mockResolvedValueOnce(makeTree())
     readFileMock.mockResolvedValue("# Title\n\nBody.")

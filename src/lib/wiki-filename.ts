@@ -34,6 +34,8 @@ export function makeQuerySlug(title: string): string {
     .normalize("NFKC")
     .trim()
     .replace(/\s+/g, "-")
+    // 标题中的路径分隔符属于名称，转为连字符，避免词语粘连。
+    .replace(/[\\/]+/g, "-")
     // Keep Unicode letters, Unicode digits, and the ASCII hyphen.
     // Stripping emoji / punctuation keeps the filename
     // filesystem-safe across Windows / macOS / Linux.

@@ -213,7 +213,10 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
     return { nodes: [], edges: [], communities: [] }
   }
 
-  const mdFiles = flattenMdFiles(tree)
+  // 来源摘要仅用于追溯，不参与知识关系图；按目录排除缺少 type 的旧来源页。
+  const mdFiles = flattenMdFiles(tree).filter(
+    (file) => !normalizePath(file.path).startsWith(`${wikiRoot}/sources/`),
+  )
   if (mdFiles.length === 0) {
     return { nodes: [], edges: [], communities: [] }
   }
@@ -250,7 +253,8 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   // Filter out query nodes (research results, saved chat answers) — they are
   // intermediate artifacts, not knowledge structure. The entities/concepts
   // extracted from them via auto-ingest are what belong in the graph.
-  const HIDDEN_TYPES = new Set(["query"])
+  // 来源页可能位于自定义目录，因此也根据 frontmatter 排除。
+  const HIDDEN_TYPES = new Set(["query", "source"])
   for (const [id, node] of nodeMap) {
     if (HIDDEN_TYPES.has(node.type)) {
       nodeMap.delete(id)

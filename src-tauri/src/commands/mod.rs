@@ -4,6 +4,9 @@ pub mod codex_cli;
 pub mod ebook;
 pub mod external_search;
 pub mod extract_images;
+pub mod file_approval;
+#[cfg(test)]
+mod file_approval_tests;
 pub mod file_history;
 pub mod file_sync;
 pub mod fs;

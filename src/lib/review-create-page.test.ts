@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { ReviewItem } from "@/stores/review-store"
 import { availableReviewPageFileName, createReviewPageDrafts } from "./review-create-page"
+import { parseWikiSchemaRouting } from "./wiki-schema"
 
 function review(overrides: Partial<ReviewItem>): ReviewItem {
   return {
@@ -16,6 +17,20 @@ function review(overrides: Partial<ReviewItem>): ReviewItem {
 }
 
 describe("createReviewPageDrafts", () => {
+  it("从待审阅创建页面时，类型和目录必须遵守项目 schema", () => {
+    const routing = parseWikiSchemaRouting("## Page Types\n| Type | Directory |\n| concept | wiki/knowledge/terms/ |")
+    const drafts = createReviewPageDrafts(review({ title: "缺少概念页面：查询模型" }), "Create Page", routing)
+
+    expect(drafts).toEqual([{ title: "查询模型", pageType: "concept", dir: "knowledge/terms" }])
+  })
+
+  it("schema 未声明 entity 时，不得因为正文提到实体就创建实体分类", () => {
+    const routing = parseWikiSchemaRouting("## Page Types\n| Type | Directory |\n| data-model | wiki/data-models/ |")
+
+    expect(() => createReviewPageDrafts(review({ title: "实体存储结构" }), "Create Page", routing))
+      .toThrow(/schema/)
+  })
+
   it("creates one entity page per missing entity named in Chinese review text", () => {
     const drafts = createReviewPageDrafts(
       review({

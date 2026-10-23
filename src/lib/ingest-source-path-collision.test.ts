@@ -10,9 +10,15 @@ import { sourceSummarySlugFromIdentity } from "./source-identity"
 import { migrateSourcePath } from "./source-lifecycle"
 
 vi.mock("@/commands/fs", () => realFs)
+// 本组聚焦来源路径与断点恢复；最终验收另有完整输入输出集成测试。
+vi.mock("./ingest-acceptance", () => ({
+  runIngestAcceptance: vi.fn(async () => ({ report: { status: "passed", rounds: [] }, reviews: [] })),
+}))
 
 let sourceMarkers: string[] = []
 let failLongChunksOnce = new Set<number>()
+let truncateLongChunksOnce = new Set<number>()
+let truncateLongAboveChars = 0
 let extraReviewResponse = ""
 let generationSuffix = ""
 let truncatedRepairResponse = ""
@@ -20,16 +26,23 @@ let abortDuringReview: AbortController | null = null
 let interactiveGenerationOverride = ""
 let mergeRequestCount = 0
 let truncateGenerationOnce = false
+let truncateAnalysisOnce = false
 let emptyGenerationOnce = false
 let confirmResumeCompleteOnce = false
+let truncatedMergeResponse = ""
 
 vi.mock("./llm-client", () => ({
   streamChat: vi.fn(async (_cfg, messages, cb) => {
     const systemPrompt = String(messages?.[0]?.content ?? "")
     const userPrompt = String(messages?.[1]?.content ?? "")
 
-    if (systemPrompt.startsWith("You are merging two versions")) {
+    if (systemPrompt.startsWith("You are merging ")) {
       mergeRequestCount++
+      if (truncatedMergeResponse) {
+        cb.onToken(truncatedMergeResponse)
+        cb.onDone({ finishReason: "length", truncated: true })
+        return
+      }
       const incoming = userPrompt.split("## Newly generated version")[1]?.split("---")[2]
       cb.onToken(incoming?.trim() || "---\ntitle: merged\n---\n\n# merged")
       cb.onDone()
@@ -70,6 +83,12 @@ vi.mock("./llm-client", () => ({
         cb.onError(new Error(`chunk ${chunkIndex} failed once`))
         return
       }
+      const main = userPrompt.split("## MAIN CHUNK TO ANALYZE\n")[1]?.split("Return only the two requested sections.")[0] ?? ""
+      if (truncateLongChunksOnce.delete(numericChunkIndex) || truncateLongAboveChars > 0 && main.length > truncateLongAboveChars) {
+        cb.onToken("INCOMPLETE_CHUNK_ANALYSIS")
+        cb.onDone({ finishReason: "length", truncated: true })
+        return
+      }
       cb.onToken([
         "## Chunk Analysis",
         `Chunk ${chunkIndex} introduced topic ${chunkIndex}.`,
@@ -102,7 +121,10 @@ vi.mock("./llm-client", () => ({
     )
     if (!targetMatch) {
       cb.onToken("## Analysis\nConfiguration source.")
-      cb.onDone()
+      if (truncateAnalysisOnce) {
+        truncateAnalysisOnce = false
+        cb.onDone({ finishReason: "length", truncated: true })
+      } else cb.onDone()
       return
     }
 
@@ -167,6 +189,8 @@ describe("autoIngest source summary paths", () => {
   beforeEach(async () => {
     sourceMarkers = []
     failLongChunksOnce = new Set()
+    truncateLongChunksOnce = new Set()
+    truncateLongAboveChars = 0
     extraReviewResponse = ""
     generationSuffix = ""
     truncatedRepairResponse = ""
@@ -174,8 +198,10 @@ describe("autoIngest source summary paths", () => {
     interactiveGenerationOverride = ""
     mergeRequestCount = 0
     truncateGenerationOnce = false
+    truncateAnalysisOnce = false
     emptyGenerationOnce = false
     confirmResumeCompleteOnce = false
+    truncatedMergeResponse = ""
     mockStreamChat.mockClear()
     mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
@@ -202,6 +228,7 @@ describe("autoIngest source summary paths", () => {
       streamingContent: "",
     })
     useWikiStore.setState({
+      sourceWatchConfig: { ...useWikiStore.getState().sourceWatchConfig, generateSourceSummary: true },
       project: {
         id: "same-basename-sources",
         name: "same-basename-sources",
@@ -309,6 +336,26 @@ describe("autoIngest source summary paths", () => {
     expect(content).toContain("corrected wording")
     expect(content).not.toContain("obsolete wording")
     expect(mergeRequestCount).toBe(0)
+  })
+
+  it("多来源页面合并遵守入库思考设置，不接受达到输出上限的半截合并正文", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    const sharedPath = `${tmp.path}/wiki/concepts/shared.md`
+    await writeFileRaw(sharedPath, '---\ntitle: Shared\ntype: concept\nsources: [other.md]\n---\n# Shared\nOld evidence.')
+    generationSuffix = '\n---FILE: wiki/concepts/shared.md---\n---\ntitle: Shared\ntype: concept\nsources: [project-a/config.yaml]\n---\n# Shared\nNew evidence.\n---END FILE---'
+    // 半截响应长度充足，不能仅靠正文长度保护识别；必须遵守模型的截断标记。
+    truncatedMergeResponse = '---\ntitle: Shared\ntype: concept\n---\n# Shared\nINCOMPLETE_MERGE '.repeat(5)
+    await autoIngest(tmp.path, sourcePath, {
+      ...useWikiStore.getState().llmConfig, maxContextSize: 1_000_000,
+      reasoning: { mode: "max" }, ingestReasoning: { mode: "off" },
+    })
+    const call = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).startsWith("You are merging "))
+    expect(call?.[4]).toMatchObject({ reasoning: { mode: "off" }, max_tokens: 32_768 })
+    const saved = await fs.readFile(sharedPath, "utf8")
+    expect(saved).not.toContain("INCOMPLETE_MERGE")
+    expect(saved).toContain("New evidence.")
+    expect(saved).toContain("other.md")
   })
 
   it("moves the canonical source summary and its source reference", async () => {
@@ -530,6 +577,151 @@ describe("autoIngest source summary paths", () => {
     expect(finalDigestSection).not.toContain(
       `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
     )
+  })
+
+  it("来源能放入上下文但分析输出截断时，自动分块恢复而不直接终止入库", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["recovered analysis"]
+    truncateAnalysisOnce = true
+    const sourcePath = `${tmp.path}/raw/sources/project-a/dense-report.md`
+    await writeFileRaw(sourcePath, [
+      "# 第一节", "甲".repeat(4500), "## 第二节", "乙".repeat(4500), "## 第三节", "丙".repeat(4500), "尾部关键映射 TAIL_EVIDENCE",
+    ].join("\n\n"))
+    await autoIngest(tmp.path, sourcePath, { ...useWikiStore.getState().llmConfig, maxContextSize: 1_000_000, ingestReasoning: { mode: "max" } }, undefined, "project-a")
+    const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
+    )
+    expect(chunkCalls.length).toBeGreaterThan(1)
+    expect(chunkCalls.map(([, messages]) => String(messages?.[1]?.content)).join("\n")).toContain("TAIL_EVIDENCE")
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(String(generationCall?.[1]?.[1]?.content)).toContain("丙".repeat(4500))
+    expect(String(generationCall?.[1]?.[1]?.content)).toContain("TAIL_EVIDENCE")
+    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/dense-report.md")}.md`
+    expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("recovered analysis")
+  })
+
+  it("分块输出截断时只细分当前片段，完整分析成功后才生成页面", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["subdivided source"]
+    truncateLongChunksOnce = new Set([1])
+    const sourcePath = `${tmp.path}/raw/sources/project-a/subdivide-report.md`
+    await writeFileRaw(sourcePath, `# First\n${"甲".repeat(9000)}\n\n## Last\n${"乙".repeat(9000)}\nTAIL_EVIDENCE`)
+    await autoIngest(tmp.path, sourcePath, { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }, undefined, "project-a")
+    const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0].content).startsWith("You are analyzing a long source document"))
+    expect(chunkCalls.length).toBeGreaterThan(2)
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(generationCall).toBeTruthy()
+    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("INCOMPLETE_CHUNK_ANALYSIS")
+    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/subdivide-report.md")}.md`
+    expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("subdivided source")
+  })
+
+  it("目录点线导致分析截断时，无损细分后仍能完成页面生成", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    // 整篇分析和首个分块均触发截断；恢复后的子块应能通过长度阈值。
+    sourceMarkers = ["directory recovery"]
+    truncateAnalysisOnce = true
+    truncateLongAboveChars = 2000
+    const sourcePath = `${tmp.path}/raw/sources/project-a/directory-report.md`
+    const content = [`查询方案${".".repeat(2100)}45`, `接口定义${".".repeat(2100)}46`].join("\n\n")
+    await writeFileRaw(sourcePath, content)
+
+    await autoIngest(tmp.path, sourcePath, { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 }, undefined, "project-a")
+
+    // 每个完整子块都必须参与分析，截断响应不得进入页面生成上下文。
+    const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages[0].content).startsWith("You are analyzing a long source document"),
+    )
+    expect(chunkCalls.length).toBeGreaterThan(2)
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(generationCall).toBeTruthy()
+    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("INCOMPLETE_CHUNK_ANALYSIS")
+    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/directory-report.md")}.md`
+    expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("directory recovery")
+  })
+
+  it.each([
+    { reasoning: { mode: "off" as const }, expectedMaxTokens: 32_768 },
+    { reasoning: { mode: "max" as const }, expectedMaxTokens: 32_768 },
+    { reasoning: { mode: "custom" as const, budgetTokens: 32_768 }, expectedMaxTokens: 32_768 },
+  ])("大上下文的整篇分析与分块恢复使用扩大的输出预算（$reasoning.mode）", async ({ reasoning, expectedMaxTokens }) => {
+    if (!tmp) throw new Error("missing temp project")
+    // 从公开入库入口触发整篇截断及分块恢复，验证预算实际传给两类 LLM 请求。
+    // 自定义思考预算仍限制在 8K，避免提高正文上限时连带放大思考开销。
+    sourceMarkers = ["expanded analysis budget"]
+    truncateAnalysisOnce = true
+    const sourcePath = `${tmp.path}/raw/sources/project-a/output-budget-report.md`
+    await writeFileRaw(sourcePath, `# One\n${"甲".repeat(4500)}\n\n## Two\n${"乙".repeat(4500)}\n\n## Three\n${"丙".repeat(4500)}`)
+
+    await autoIngest(tmp.path, sourcePath, {
+      ...useWikiStore.getState().llmConfig,
+      maxContextSize: 1_000_000,
+      ingestReasoning: reasoning,
+    }, undefined, "project-a")
+
+    const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages[0].content).startsWith("You are analyzing a long source document"),
+    )
+    expect(chunkCalls.length).toBeGreaterThan(1)
+    for (const call of [mockStreamChat.mock.calls[0], ...chunkCalls]) {
+      expect(call[4]?.max_tokens).toBe(expectedMaxTokens)
+    }
+    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/output-budget-report.md")}.md`
+    expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("expanded analysis budget")
+  })
+
+  it("持续截断时限制细分次数，不使用不完整分析生成或缓存页面", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    truncateAnalysisOnce = true
+    truncateLongAboveChars = 1
+    const sourcePath = `${tmp.path}/raw/sources/project-a/always-truncated.md`
+    await writeFileRaw(sourcePath, `# Dense\n${"甲".repeat(13000)}`)
+    const result = await autoIngest(tmp.path, sourcePath, { ...useWikiStore.getState().llmConfig, maxContextSize: 1_000_000, ingestReasoning: { mode: "max" } }, undefined, "project-a").catch((error) => error)
+    expect(result).toMatchObject({ nonRetryable: true })
+    expect(result.message).toContain("自动细分后仍达到 32,768 token")
+    expect(mockStreamChat.mock.calls.length).toBeLessThanOrEqual(7)
+    expect(mockStreamChat.mock.calls.some(([, messages]) => String(messages[0].content).includes("generate wiki files"))).toBe(false)
+    await expect(fs.access(`${tmp.path}/.llm-wiki/ingest-cache.json`)).rejects.toThrow()
+  })
+
+  it("输出截断后的分块断点可以直接恢复，不重复已完成片段和整篇分析", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    truncateAnalysisOnce = true
+    failLongChunksOnce = new Set([2])
+    sourceMarkers = ["resumed recovery"]
+    const sourcePath = `${tmp.path}/raw/sources/project-a/recovery-resume.md`
+    await writeFileRaw(sourcePath, `# One\n${"甲".repeat(4500)}\n\n## Two\n${"乙".repeat(4500)}\n\n## Three\n${"丙".repeat(4500)}`)
+    const config = { ...useWikiStore.getState().llmConfig, maxContextSize: 1_000_000 }
+    await expect(autoIngest(tmp.path, sourcePath, config, undefined, "project-a")).rejects.toThrow("Chunk analysis stream failed")
+    mockStreamChat.mockClear()
+    await autoIngest(tmp.path, sourcePath, config, undefined, "project-a")
+    expect(String(mockStreamChat.mock.calls[0]?.[1]?.[0]?.content)).toContain("You are analyzing a long source document")
+    expect(String(mockStreamChat.mock.calls[0]?.[1]?.[1]?.content)).toContain("Chunk: 2/")
+    expect(await fs.readdir(`${tmp.path}/.llm-wiki/ingest-progress`)).toEqual([])
+  })
+
+  it("切分规则升级后丢弃旧版分析断点，重新分析以避免沿用缺失内容", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    failLongChunksOnce = new Set([2])
+    const sourcePath = `${tmp.path}/raw/sources/project-a/legacy-checkpoint.md`
+    await writeFileRaw(sourcePath, `# One\n${"甲".repeat(4500)}\n\n## Two\n${"乙".repeat(4500)}\n\n## Three\n${"丙".repeat(4500)}`)
+    const config = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
+    await expect(autoIngest(tmp.path, sourcePath, config, undefined, "project-a")).rejects.toThrow("Chunk analysis stream failed")
+
+    // 模拟升级前留下的断点：即使原文和块数相同，也不得复用旧切分结果。
+    const progressDir = path.join(tmp.path, ".llm-wiki/ingest-progress")
+    const checkpointPath = path.join(progressDir, (await fs.readdir(progressDir))[0])
+    const checkpoint = JSON.parse(await fs.readFile(checkpointPath, "utf8"))
+    checkpoint.version = 1
+    checkpoint.analyses = ["LEGACY_INCOMPLETE_ANALYSIS"]
+    await fs.writeFile(checkpointPath, JSON.stringify(checkpoint))
+    mockStreamChat.mockClear()
+
+    await autoIngest(tmp.path, sourcePath, config, undefined, "project-a")
+
+    expect(String(mockStreamChat.mock.calls[0]?.[1]?.[1]?.content)).toContain("Chunk: 1/")
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("LEGACY_INCOMPLETE_ANALYSIS")
   })
 
   it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {
@@ -783,6 +975,64 @@ describe("autoIngest source summary paths", () => {
     expect(resumedPrompt).toContain("wiki/goals/preserved.md")
     const checkpointFiles = await fs.readdir(`${tmp.path}/.llm-wiki/ingest-generation`)
     expect(checkpointFiles).toHaveLength(0)
+    // 三次生成尝试共享同一份来源分析，避免每次续跑都支付完整分析延迟。
+    const analysisCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages[0]?.content ?? "").startsWith("You are an expert research analyst"),
+    )
+    expect(analysisCalls).toHaveLength(1)
+    for (const call of generationCalls) {
+      expect(String(call[1][1].content)).toContain("## Analysis\nConfiguration source.")
+    }
+  })
+
+  it.each(["source", "schema", "purpose", "index", "prompt", "model", "language", "corrupt"])("生成重试时 %s 变化会重新分析，不复用过期或损坏结果", async (change) => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    const config = { ...useWikiStore.getState().llmConfig }
+    sourceMarkers = ["before change", "after change"]
+    truncateGenerationOnce = true
+    await expect(autoIngest(tmp.path, sourcePath, config)).rejects.toThrow("generation reached its output limit")
+
+    // 只改变一个输入条件，确认复用严格受来源、项目规则和模型约束。
+    if (change === "source") await writeFileRaw(sourcePath, "name: beta\n")
+    if (change === "schema") await writeFileRaw(`${tmp.path}/schema.md`, "# Schema\nChanged page rules.")
+    if (change === "purpose") await writeFileRaw(`${tmp.path}/purpose.md`, "# Purpose\nChanged purpose.")
+    if (change === "index") await writeFileRaw(`${tmp.path}/wiki/index.md`, "# Index\n- [[external-new-topic]]")
+    if (change === "prompt") await writeFileRaw(`${tmp.path}/prompts/01-03-独立成页与名称复用规则.md`, "Changed significance rules.")
+    if (change === "model") config.model = "changed-model"
+    if (change === "language") useWikiStore.getState().setOutputLanguage("French")
+    if (change === "corrupt") {
+      const dir = `${tmp.path}/.llm-wiki/ingest-analysis`
+      await fs.writeFile(path.join(dir, (await fs.readdir(dir))[0]), "broken json")
+    }
+    mockStreamChat.mockClear()
+    await autoIngest(tmp.path, sourcePath, config)
+    const analysisCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages[0]?.content ?? "").startsWith("You are an expert research analyst"),
+    )
+    expect(analysisCalls).toHaveLength(1)
+    // 分析失效时不能继续跳过旧规则下写入的页面，必须重新生成并重新验收。
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
+      String(messages[0]?.content ?? "").includes("## What to generate"),
+    )
+    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("## Resume checkpoint")
+    expect(await fs.readdir(`${tmp.path}/.llm-wiki/ingest-analysis`)).toHaveLength(0)
+  })
+
+  it("长文断点的分析策略变化后重新分析，避免沿用旧提示词产生的片段", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/changed-policy.md`
+    const config = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
+    await writeFileRaw(sourcePath, `# One\n${"甲".repeat(4500)}\n\n## Two\n${"乙".repeat(4500)}\n\n## Three\n${"丙".repeat(4500)}`)
+    failLongChunksOnce = new Set([2])
+    await expect(autoIngest(tmp.path, sourcePath, config)).rejects.toThrow("Chunk analysis stream failed")
+    await writeFileRaw(`${tmp.path}/prompts/01-03-独立成页与名称复用规则.md`, "Updated evidence requirements.")
+    mockStreamChat.mockClear()
+    await autoIngest(tmp.path, sourcePath, config)
+    const firstChunkCall = mockStreamChat.mock.calls.find(([, messages]) =>
+      String(messages[0].content).startsWith("You are analyzing a long source document"),
+    )
+    expect(String(firstChunkCall?.[1]?.[1]?.content)).toContain("Chunk: 1/")
   })
 
   it("rejects an ingest when a truncated FILE block cannot be repaired", async () => {
@@ -986,6 +1236,28 @@ describe("autoIngest source summary paths", () => {
 
     expect(written).toEqual([])
     await expect(fs.access(path.join(tmp.path, "escape.md"))).rejects.toThrow()
+  })
+
+  // 通过真实临时文件验证交互入库也使用同一命名规则，不仅验证辅助函数。
+  it.each(["/", "\\"])("交互入库将标题中的 %s 转为连字符并同步正文引用", async (separator) => {
+    if (!tmp) throw new Error("missing temp project")
+    const title = `YPD问题排查（动作${separator}插件）`
+    interactiveGenerationOverride = [
+      `---FILE: wiki/goals/${title}.md---`,
+      "---", "type: goal", `title: '${title}'`, "---", `# ${title}`,
+      "---END FILE---",
+      "---FILE: wiki/goals/导航.md---",
+      "---", "type: goal", "title: 导航", "---", `参见 [[${title}]]。`,
+      "---END FILE---",
+    ].join("\n")
+
+    const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
+    const expectedPath = `${tmp.path}/wiki/goals/YPD问题排查（动作-插件）.md`
+    expect(written).toContain(expectedPath)
+    expect(await fs.readFile(expectedPath, "utf8")).toContain(`title: '${title}'`)
+    expect(await fs.readFile(`${tmp.path}/wiki/goals/导航.md`, "utf8"))
+      .toContain("[[YPD问题排查（动作-插件）]]")
+    await expect(fs.access(`${tmp.path}/wiki/goals/插件）.md`)).rejects.toThrow()
   })
 
   it("sanitizes malformed citation links in interactive writes", async () => {

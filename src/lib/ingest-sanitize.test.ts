@@ -1,8 +1,42 @@
 import { describe, it, expect } from "vitest"
 import {
   normalizeMalformedWikilinks,
+  normalizeWikiFileLinks,
   sanitizeIngestedFileContent,
 } from "./ingest-sanitize"
+
+describe("文件名引用约定", () => {
+  const paths = ["wiki/constraints/查询边界.md", "wiki/concepts/实际文件.md", "wiki/interfaces/接口#get.md"]
+
+  // 依据实际文件路径转换，不用页面标题猜测文件名；锚点与显示文字必须保留。
+  it("统一路径和扩展名，并保留章节、块引用和别名", () => {
+    const input = "[[constraints/查询边界]] [[wiki/concepts/实际文件.md#范围|说明]] [[./constraints/查询边界#^block]] [[interfaces/接口#get.md]]"
+    expect(normalizeWikiFileLinks(input, paths)).toBe("[[查询边界]] [[实际文件#范围|说明]] [[查询边界#^block]] [[接口#get]]")
+  })
+
+  it("不改写代码、媒体嵌入、来源字段和无法确认的目标", () => {
+    const input = "---\nsources: [constraints/查询边界.md]\n---\n`[[constraints/查询边界]]` ![[constraints/查询边界]] [[unknown/未知]]\n```md\n[[constraints/查询边界]]\n```\n[[constraints/查询边界]]"
+    expect(normalizeWikiFileLinks(input, paths)).toBe(input.replace(/\[\[constraints\/查询边界\]\]$/, "[[查询边界]]"))
+  })
+
+  it("同名文件不丢弃路径，重复执行结果不变", () => {
+    const input = "[[constraints/查询边界]] [[concepts/查询边界]]"
+    expect(normalizeWikiFileLinks(input, [...paths, "wiki/concepts/查询边界.md"])).toBe(input)
+    const normalized = normalizeWikiFileLinks("[[constraints/查询边界#范围|说明]]", paths)
+    expect(normalizeWikiFileLinks(normalized, paths)).toBe(normalized)
+  })
+
+  it("将有明确文件依据的历史标题引用转成文件名，不截断标题中的斜线和井号", () => {
+    const titles = new Map([["数据库规范（MySQL/Oracle）", "wiki/concepts/实际文件.md"], ["接口#get", "wiki/interfaces/接口#get.md"]])
+    expect(normalizeWikiFileLinks("[[数据库规范（MySQL/Oracle）#范围|规范]] [[接口#get]]", paths, titles))
+      .toBe("[[实际文件#范围|规范]] [[接口#get]]")
+  })
+
+  it("文件名优先于其他页面的同名标题", () => {
+    expect(normalizeWikiFileLinks("[[查询边界.md#范围]]", paths, new Map([["查询边界", "wiki/concepts/实际文件.md"]])))
+      .toBe("[[查询边界#范围]]")
+  })
+})
 
 describe("sanitizeIngestedFileContent", () => {
   it("returns clean content unchanged", () => {

@@ -8,6 +8,11 @@ import { describe, it, expect } from "vitest"
 import { makeQuerySlug, makeQueryFileName } from "./wiki-filename"
 
 describe("makeQuerySlug", () => {
+  it("将标题中的正反斜线转为连字符，避免词语粘连", () => {
+    expect(makeQuerySlug("动作/插件\\发布")).toBe("动作-插件-发布")
+    expect(makeQuerySlug("MySQL/Oracle")).toBe("mysql-oracle")
+  })
+
   it("ASCII title is lowercased and hyphenated", () => {
     expect(makeQuerySlug("Understanding RoPE in LLMs")).toBe("understanding-rope-in-llms")
   })

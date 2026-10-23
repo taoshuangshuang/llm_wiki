@@ -62,6 +62,23 @@ afterEach(async () => {
 })
 
 describe("review persistence — round-trip", () => {
+  it("审阅关联和独立消息经过真实文件保存、重载后仍可继续", async () => {
+    const context = { id: "review-stable", type: "contradiction" as const, title: "版本差异", description: "对照原始证据", affectedPages: ["wiki/concepts/版本.md"] }
+    const conversations: Conversation[] = [
+      { id: "review-conv", title: context.title, createdAt: 1, updatedAt: 2, reviewContext: context, contextFiles: context.affectedPages },
+      { id: "normal-conv", title: "普通会话", createdAt: 1, updatedAt: 1 },
+    ]
+    const messages: DisplayMessage[] = [
+      { id: "review-msg", conversationId: "review-conv", role: "user", content: "先核查来源", timestamp: 2 },
+      { id: "normal-msg", conversationId: "normal-conv", role: "user", content: "其他问题", timestamp: 1 },
+    ]
+    await saveChatHistory(tmp.path, conversations, messages)
+    const loaded = await loadChatHistory(tmp.path)
+    expect(loaded.conversations).toEqual(conversations)
+    expect(loaded.messages).toEqual(messages)
+    expect(loaded.conversations[0].reviewContext?.id).toBe(context.id)
+    expect(loaded.conversations[1].reviewContext).toBeUndefined()
+  })
   it("save then load returns normalized review items", async () => {
     const items: ReviewItem[] = [
       makeReview({ id: "r-1", title: "Alpha" }),

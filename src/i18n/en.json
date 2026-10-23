@@ -1,4 +1,26 @@
 {
+  "fileApproval": {
+    "title": "Important file change approval",
+    "important": "Important file",
+    "mark": "Mark important",
+    "importantHint": "Protected: AI changes and deletion require human approval. Click to remove the important mark.",
+    "markHint": "Require human approval before AI changes or deletes this file.",
+    "hint": "AI changes are saved as proposals. Originals remain unchanged until approval. Open a file below to inspect its diff, then approve or reject.",
+    "empty": "No file change proposals. Mark a Markdown file as important using its top-right toolbar.",
+    "loading": "Loading proposals…",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "history": "Review history",
+    "refresh": "Refresh",
+    "modify": "Modify",
+    "delete": "Delete file",
+    "diffHint": "Red strikethrough indicates removal; green indicates additions.",
+    "approve": "Approve and apply",
+    "reject": "Reject change",
+    "conflict": "The original file changed. Reject this stale proposal and generate a new one to preserve subsequent edits.",
+    "queued": "This file is important. The change is pending under Review → Important file change approval. The original remains unchanged until approval."
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
@@ -42,7 +64,7 @@
     "recentProjects": "Recent Projects"
   },
   "sidebar": {
-    "businessModules": "Business modules",
+    "businessModules": "Business",
     "moduleLoading": "Loading modules…",
     "moduleSetup": "Add a Business Modules section with a JSON module dictionary to schema.md.",
     "moduleEmpty": "No pages in this module.",
@@ -460,7 +482,37 @@
     "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —",
-    "actionFailed": "The action failed and remains pending. You can retry: {{error}}"
+    "actionFailed": "The action failed and remains pending. You can retry: {{error}}",
+    "startConversation": "Start conversation",
+    "continueConversation": "Continue conversation",
+    "conversationTab": "Review conversation",
+    "panelTabs": "Right panel",
+    "closePanel": "Close right panel",
+    "confirmResolved": "Confirm resolved",
+    "resolvedStatus": "Resolved",
+    "pendingStatus": "Pending review",
+    "removedStatus": "Review removed",
+    "resolvedFromConversation": "Confirmed resolved in review conversation ({{id}})",
+    "conversationHint": "Check evidence first. Wiki changes require your explicit instruction. You confirm when the review is resolved.",
+    "conversationEmpty": "Enter a question, add evidence, or explain how to handle this review.",
+    "starters": {
+      "title": "Confirm the specific conclusions for this review",
+      "hint": "You can also add other conclusions, conditions, or evidence below.",
+      "loading": "Checking whether this review needs choices…",
+      "failed": "Could not generate choices. Retry or type your answer below.",
+      "uncertain": "Not sure yet; check the evidence first",
+      "submit": "Confirm choices and continue",
+      "message": "These are my choices for this review. Check the evidence and propose specific next steps. Do not edit pages or resolve the review yet."
+    },
+    "types": {
+      "contradiction": "Contradiction",
+      "duplicate": "Duplicate",
+      "missing-page": "Missing page",
+      "confirm": "Confirmation",
+      "suggestion": "Suggestion",
+      "structure": "Structure",
+      "coverage": "Content omissions"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -774,6 +826,8 @@
         "autoIngest": "Auto-ingest allowed source files",
         "autoIngestDescription": "When disabled, external changes still refresh the file tree but do not create ingest tasks.",
         "persistExtractedMarkdown": "Keep parsed Markdown",
+        "generateSourceSummary": "Generate source summaries (optional)",
+        "generateSourceSummaryDescription": "Disabled by default. Knowledge pages reference original sources and retain images. Enable to add document overview pages. Existing summaries are kept.",
         "persistExtractedMarkdownDescription": "Save extracted document text under raw/parsed using the same folder structure as raw/sources.",
         "parsingConcurrency": "Concurrent document parsers",
         "parsingConcurrencyDescription": "Parse up to this many imported documents at once. PDF parsing remains internally serialized for safety.",
@@ -1077,6 +1131,8 @@
     "selectedCount": "{{count}} selected",
     "restartSelected": "Restart",
     "cancelSelected": "Cancel",
+    "removeSelectedStopped": "Delete stopped records",
+    "removeStoppedTask": "Delete this queue record (keep source files and wiki pages)",
     "selectTask": "Select {{name}}",
     "moveUp": "Move earlier",
     "moveDown": "Move later",

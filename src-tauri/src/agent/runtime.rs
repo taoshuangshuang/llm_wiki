@@ -17,7 +17,7 @@ use super::context::{
 };
 use super::events::AgentEvent;
 use super::permissions::{AgentCapability, PermissionPolicy};
-use super::provider::{AgentLlmProvider, LlmClient, LlmConfig};
+use super::provider::{AgentLlmProvider, AgentLlmResponse, LlmClient, LlmConfig};
 use super::router::route_query;
 use super::skills::{load_project_skills, AgentSkill};
 use super::tools::{self, AnyTxtConfig, ToolRegistry, WebSearchConfig};
@@ -35,9 +35,9 @@ const DEFAULT_CHAT_SEARCH_RESULTS: usize = 5;
 const MAX_CHAT_SEARCH_RESULTS: usize = 10;
 const MAX_IMAGES_PER_TURN: usize = 5;
 const MAX_IMAGE_BASE64_BYTES: usize = 7 * 1024 * 1024;
-const MAX_AGENT_TOOL_ITERATIONS: usize = 8;
-const AGENT_STRUCTURED_MAX_TOKENS: u32 = 8192;
-const AGENT_SKILL_STRUCTURED_MAX_TOKENS: u32 = 16384;
+const MAX_AGENT_TOOL_ITERATIONS: usize = 30;
+// Agent 写入可能携带完整页面，统一沿用入库链路的 32K 输出预算。
+const AGENT_STRUCTURED_MAX_TOKENS: u32 = 32_768;
 const MAX_SKILL_REFERENCE_BYTES: u64 = 256 * 1024;
 const MAX_USER_INPUT_FIELDS: usize = 12;
 const MAX_USER_INPUT_OPTIONS: usize = 8;
@@ -1169,6 +1169,7 @@ impl AgentRuntime {
                 references: &references,
                 retrieval_summary: &retrieval_summary,
                 explicit_files: &explicit_files,
+                review_context: request.review_context.as_ref(),
             }),
             self.llm_config.as_ref(),
         );
@@ -1312,7 +1313,7 @@ impl AgentRuntime {
             .filter(|cfg| cfg.is_usable_for_backend_http())
             .ok_or_else(|| "Backend Agent LLM is not configured".to_string())?;
         let client = LlmClient::new(config.clone())?
-            .structured_task_config(agent_structured_max_tokens(!skills.is_empty()));
+            .structured_task_config(AGENT_STRUCTURED_MAX_TOKENS);
         let project_context = project_context_for_retrieval_mode(
             load_project_context(&self.project_path),
             request.retrieval_mode,
@@ -1353,7 +1354,7 @@ impl AgentRuntime {
         let mut last_prompt_chars = 0usize;
         let has_explicit_skills =
             request.skill_mode == AgentSkillMode::Explicit && !skills.is_empty();
-        let max_iterations = agent_loop_iteration_budget(request.mode, has_explicit_skills);
+        let max_iterations = agent_loop_iteration_budget(request.mode);
         let retrieval_budget =
             agent_loop_retrieval_budget(request.mode, request.retrieval_mode, has_explicit_skills);
 
@@ -1426,7 +1427,11 @@ impl AgentRuntime {
 
         for iteration in 0..max_iterations {
             check_cancel(cancellation)?;
-            let must_finalize = force_final_next || retrieval_steps >= retrieval_budget;
+            // 格式错误、权限拒绝和非检索工具同样会消耗轮次；最后一轮必须
+            // 用已有证据收尾，不能只依赖检索预算触发结论，也不增加调用上限。
+            let must_finalize = force_final_next
+                || retrieval_steps >= retrieval_budget
+                || iteration + 1 == max_iterations;
             let built_context = fit_context_to_model(
                 build_agent_context(AgentContextInput {
                     query: message,
@@ -1442,6 +1447,7 @@ impl AgentRuntime {
                     // every iteration.
                     retrieval_summary: "",
                     explicit_files: &explicit_files,
+                    review_context: request.review_context.as_ref(),
                 }),
                 self.llm_config.as_ref(),
             );
@@ -1489,11 +1495,11 @@ impl AgentRuntime {
             } else {
                 &[]
             };
-            let raw =
-                match generate_with_cancellation(&client, &system, &user, images, cancellation)
+            let response =
+                match generate_response_with_cancellation(&client, &system, &user, images, cancellation)
                     .await
                 {
-                    Ok(raw) => {
+                    Ok(response) => {
                         tool_emit_event(
                             &mut tool_events,
                             &mut events,
@@ -1504,7 +1510,7 @@ impl AgentRuntime {
                                 detail: None,
                             },
                         );
-                        raw
+                        response
                     }
                     Err(err) => {
                         tool_emit_event(
@@ -1527,7 +1533,24 @@ impl AgentRuntime {
                         return Err(err);
                     }
                 };
-            let action = parse_agent_loop_action(&raw);
+            let raw = &response.text;
+            let mut action = parse_agent_loop_action(raw);
+            if action.action == "invalid_tool_json" {
+                let detail = action.answer.as_deref().unwrap_or_default();
+                let diagnostic = save_agent_json_diagnostic(
+                    &self.project_path, client.provider_name(), client.model_name(),
+                    client.json_output_enabled(), &response, detail,
+                );
+                let location = match diagnostic {
+                    Ok(path) => format!("本地诊断记录：{path}"),
+                    Err(error) => format!("本地诊断记录保存失败：{error}"),
+                };
+                action.answer = Some(format!(
+                    "{detail}\nfinish_reason={}, output_tokens={}\n{location}",
+                    response.finish_reason.as_deref().unwrap_or("unknown"),
+                    response.output_tokens.map(|tokens| tokens.to_string()).unwrap_or_else(|| "unknown".to_string())
+                ));
+            }
 
             if must_finalize {
                 let answer = forced_final_answer(&raw, &action, &references);
@@ -1758,7 +1781,7 @@ impl AgentRuntime {
                     cancellation,
                 )
                 .await?;
-            if is_shell_approval_required_observation(&observation) {
+            if is_human_approval_required_observation(&observation) {
                 let answer = observation.summary.clone();
                 if event_sink.is_some() {
                     emit_event(
@@ -2465,22 +2488,16 @@ impl AgentRuntime {
             available.join(", "),
         );
         let client = LlmClient::new(config.clone())?
-            .structured_task_config(agent_structured_max_tokens(!skills.is_empty()));
+            .structured_task_config(AGENT_STRUCTURED_MAX_TOKENS);
         let raw = generate_with_cancellation(&client, system, &user, &[], cancellation).await?;
         parse_model_tool_plan(&raw)
     }
 }
 
-fn agent_structured_max_tokens(has_skills: bool) -> u32 {
-    if has_skills {
-        AGENT_SKILL_STRUCTURED_MAX_TOKENS
-    } else {
-        AGENT_STRUCTURED_MAX_TOKENS
-    }
-}
-
-fn is_shell_approval_required_observation(observation: &AgentObservation) -> bool {
+fn is_human_approval_required_observation(observation: &AgentObservation) -> bool {
     observation.tool == SHELL_APPROVAL_REQUIRED_OBSERVATION
+        || (matches!(observation.tool.as_str(), "wiki.write_page" | "workspace.write_file" | "workspace.append_file")
+            && observation.summary.starts_with("failed: FILE_APPROVAL_REQUIRED:"))
 }
 
 fn is_skill_preference_probe_command(command: &str) -> bool {
@@ -2795,19 +2812,12 @@ fn project_context_for_retrieval_mode(
     project
 }
 
-fn agent_loop_iteration_budget(mode: AgentMode, has_skills: bool) -> usize {
-    let base = match mode {
-        AgentMode::Fast => 4,
-        AgentMode::Standard | AgentMode::LocalFirst => MAX_AGENT_TOOL_ITERATIONS,
-        AgentMode::Deep => 12,
-    };
-    if !has_skills {
-        return base;
-    }
+// 各模式统一使用明确的模型调用上限，技能选择不再额外扩大预算。
+fn agent_loop_iteration_budget(mode: AgentMode) -> usize {
     match mode {
-        AgentMode::Fast => 8,
-        AgentMode::Standard | AgentMode::LocalFirst => 16,
-        AgentMode::Deep => 20,
+        AgentMode::Fast => 20,
+        AgentMode::Standard | AgentMode::LocalFirst => MAX_AGENT_TOOL_ITERATIONS,
+        AgentMode::Deep => 60,
     }
 }
 
@@ -2936,6 +2946,7 @@ Choose exactly one action per turn:\n\
 2. {{\"action\":\"tool\",\"tool\":\"user.ask\",\"title\":\"...\",\"description\":\"...\",\"fields\":[{{\"id\":\"choice\",\"type\":\"single\",\"label\":\"...\",\"options\":[{{\"label\":\"...\",\"value\":\"...\",\"recommended\":true}}]}}]}}\n\
 3. {{\"action\":\"tool\",\"tool\":\"workspace.write_file\",\"path\":\"cover-image/cover.svg\",\"content\":\"...\"}}\n\
 3b. {{\"action\":\"tool\",\"tool\":\"workspace.append_file\",\"path\":\"deck/index.html\",\"content\":\"...\"}}\n\
+3c. {{\"action\":\"tool\",\"tool\":\"wiki.write_page\",\"path\":\"wiki/faqs/example.md\",\"content\":\"complete Markdown\",\"allowOverwrite\":true}} (allowOverwrite only for an authorized update of an existing page)\n\
 4. {{\"action\":\"final\",\"answer\":\"...\"}}\n\
 Use tools when they are useful, then wait for the observation in the next turn before deciding the next step.\n\
 	Do not return natural-language plans such as \"I need to read...\" or \"Let me search...\". If you intend to read/search/write/run something, return the matching tool JSON action in this turn.\n\
@@ -2946,7 +2957,7 @@ Use tools when they are useful, then wait for the observation in the next turn b
 	Do not claim that a generated file exists until a workspace.write_file or shell.exec observation confirms it. In the final answer, mention only observed generated file paths.\n\
 	Converge quickly. Do not keep reading optional references, running optional validation, or polishing after the requested deliverable has been written. Prefer final as soon as the core user request is satisfied.\n\
 	Only use shell.exec when active skill instructions or the user's explicit request require command-line work after files have been written with workspace.write_file. Generated files must be written under the Agent workspace described above. Commands whose explicit file paths stay inside the Agent workspace can run without an approval prompt; commands that mention external paths, home directories, downloads, temp folders, or network URLs require approval.\n\
-Use wiki.write_page only when the user explicitly asks to create or update a wiki page. Existing pages are create-only unless allowOverwrite is explicitly justified by the user's request.{smart_retrieval}{faithful_retrieval}"
+Use wiki.write_page for authorized Wiki creation or updates, including changes already authorized earlier in this conversation. Its path is project-relative under wiki/ and content must be the complete Markdown page. For an authorized update of an existing page, set allowOverwrite=true; otherwise keep create-only behavior. workspace.write_file and workspace.append_file are only for artifacts under agent-workspace, never Wiki edits. A path or JSON error means the attempted call failed, not that the correct tool is unavailable; correct the tool or parameters and retry within the remaining budget.{smart_retrieval}{faithful_retrieval}"
     )
 }
 
@@ -2957,7 +2968,7 @@ fn build_agent_final_system(base_system: &str, retrieval_mode: AgentRetrievalMod
         ""
     };
     format!(
-        "{base_system}\n\nThe retrieval phase is complete. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided.{faithful_retrieval} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
+        "{base_system}\n\nThe tool phase has ended. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided. State what was verified, what remains uncertain, and any requested changes that were not completed. A rejected or malformed tool action is not a successful read or write; never claim an unobserved change was applied. Follow the user's language.{faithful_retrieval} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
     )
 }
 
@@ -3028,11 +3039,11 @@ fn build_agent_loop_user(
             out.push_str("- source.search: search raw source excerpts. This is the only retrieval tool permitted in faithful-source mode.\n");
         } else {
             out.push_str("- wiki.search: retrieve wiki pages for factual or topical questions.\n");
-            out.push_str("- wiki.read_page: read a specific wiki markdown page by path.\n");
+            out.push_str("- wiki.read_page: read a specific Wiki Markdown page using the exact path returned by search or attachments. Do not infer directories from titles or page types. If not found, retry a confirmed existing path from the error or use wiki.search.\n");
             out.push_str("- source.search: search raw source snippets.\n");
             out.push_str("- graph.search: retrieve relationships, neighbors, backlinks, dependencies, and connections between entities. Prefer it for relational questions and query with concise entity or concept names.\n");
             out.push_str(
-                "- wiki.write_page: create a wiki markdown page when explicitly requested.\n",
+                "- wiki.write_page: create or update an authorized Wiki Markdown page under wiki/. Supply complete content; set allowOverwrite=true for an authorized update of an existing page. Prior user authorization in this conversation remains valid. Do not use workspace.write_file for Wiki edits.\n",
             );
         }
     }
@@ -3042,9 +3053,9 @@ fn build_agent_loop_user(
     if request.tools.anytxt && request.retrieval_mode != AgentRetrievalMode::Faithful {
         out.push_str("- anytxt.search: search files indexed by AnyTXT.\n");
     }
+    out.push_str("- user.ask: pause and show a structured form when the task needs user choices or confirmation. Prefer single-choice, multi-choice, or confirmation fields over asking the user to type a choice; include concise option descriptions and a justified recommendation when useful.\n");
     if !skills.is_empty() {
         out.push_str("- skill.read_file: read a Markdown/reference file from an active skill directory by relative path. Prefer this over shell.exec for skill references.\n");
-        out.push_str("- user.ask: pause and show the user a structured form with single-choice, multi-choice, text, textarea, or confirmation fields when an active skill needs user input.\n");
         out.push_str("- workspace.write_file: write generated artifacts under agent-workspace by relative path. For large HTML/PPT, initialize the file and then append chunks.\n");
         out.push_str("- workspace.append_file: append content to a generated artifact under agent-workspace. Prefer this for large HTML/PPT after workspace.write_file.\n");
         out.push_str("- shell.exec: run a command from the Agent workspace when a selected/available skill requires command-line work. Workspace-local commands can run directly; external paths or network access require approval.\n");
@@ -3075,32 +3086,80 @@ fn build_agent_loop_user(
 
 fn parse_agent_loop_action(raw: &str) -> AgentLoopAction {
     let trimmed = raw.trim();
-    if let Ok(action) = serde_json::from_str::<AgentLoopAction>(trimmed) {
-        return normalize_agent_loop_action(action);
-    }
-    if let Some(json) = extract_json_object(trimmed) {
-        if let Ok(action) = serde_json::from_str::<AgentLoopAction>(json) {
-            return normalize_agent_loop_action(action);
+    let mut parse_error = match parse_agent_action_json(trimmed) {
+        Ok(action) => return normalize_agent_loop_action(action),
+        Err(error) => error,
+    };
+    if let Some(json) = extract_json_object(trimmed).filter(|json| *json != trimmed) {
+        match parse_agent_action_json(json) {
+            Ok(action) => return normalize_agent_loop_action(action),
+            Err(error) if !trimmed.starts_with('{') => parse_error = error,
+            Err(_) => {},
         }
     }
-    if looks_like_agent_tool_json(trimmed) {
-        return AgentLoopAction {
-            action: "invalid_tool_json".to_string(),
-            answer: Some(
-                "Invalid or truncated Agent tool JSON. Return one complete compact JSON object. For large generated files, initialize with workspace.write_file and continue with workspace.append_file chunks instead of putting the whole file or heredocs in one JSON object."
-                    .to_string(),
-            ),
-            ..AgentLoopAction::default()
-        };
-    }
+    // 保留解析分类、行列和长度，不把正文或请求凭据写入活动记录。
+    // Eof 只表示 JSON 不完整；是否因 token 耗尽必须由供应商停止原因判断。
+    let detail = format!(
+        "JSON parse failure: category={:?}, line={}, column={}, response_chars={}. {}",
+        parse_error.classify(), parse_error.line(), parse_error.column(),
+        trimmed.chars().count(), parse_error
+    );
+    let correction = if looks_like_agent_tool_json(trimmed) {
+        "Return one complete compact JSON object; escape newlines, double quotes and backslashes inside string values. No tool was executed by this rejected action. For an authorized Wiki edit, use wiki.write_page with path under wiki/, complete Markdown content and allowOverwrite=true only for an authorized update of an existing page. Do not switch Wiki edits to workspace.write_file. Only for generated artifacts under agent-workspace, use workspace.write_file followed by workspace.append_file chunks. Do not inline large heredocs in shell.exec JSON."
+    } else {
+        r#"Agent loop responses must be compact JSON. Return either a tool action like {"action":"tool","tool":"wiki.read_page","path":"..."} or a final action like {"action":"final","answer":"..."}. Do not return plain text."#
+    };
     AgentLoopAction {
         action: "invalid_tool_json".to_string(),
-        answer: Some(
-            "Agent loop responses must be compact JSON. Return either a tool action like {\"action\":\"tool\",\"tool\":\"wiki.read_page\",\"path\":\"...\"} or a final action like {\"action\":\"final\",\"answer\":\"...\"}. Do not return plain text."
-                .to_string(),
-        ),
+        answer: Some(format!("{detail}\n{correction}")),
         ..AgentLoopAction::default()
     }
+}
+
+/// 部分供应商返回字符串内的原始空白控制字符；仅补充 JSON 转义后重新严格解析。
+fn parse_agent_action_json(raw: &str) -> Result<AgentLoopAction, serde_json::Error> {
+    match serde_json::from_str(raw) {
+        Err(error) if error.is_syntax() => {
+            match escape_json_string_whitespace(raw) {
+                Some(escaped) => serde_json::from_str(&escaped),
+                None => Err(error),
+            }
+        }
+        result => result,
+    }
+}
+
+/// 只处理引号内的原始换行、回车和制表符；保留已有转义及所有正文字符。
+/// 不猜测反斜杠后换行的含义，不修补截断、引号边界或其他控制字符。
+fn escape_json_string_whitespace(raw: &str) -> Option<String> {
+    let mut output = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut changed = false;
+    for character in raw.chars() {
+        if in_string && character <= '\u{001f}' {
+            if escaped {
+                return None;
+            }
+            output.push_str(match character {
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _ => return None,
+            });
+            changed = true;
+            continue;
+        }
+        if escaped {
+            escaped = false;
+        } else if in_string && character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            in_string = !in_string;
+        }
+        output.push(character);
+    }
+    changed.then_some(output)
 }
 
 fn looks_like_agent_tool_json(value: &str) -> bool {
@@ -3658,7 +3717,8 @@ fn is_shell_command_allowed_without_prompt(
     project_path: &str,
 ) -> bool {
     is_shell_command_approved(command, approved)
-        || is_shell_command_scoped_to_agent_workspace(command, project_path)
+        || (!crate::commands::file_approval::project_has_important_files(project_path).unwrap_or(true)
+            && is_shell_command_scoped_to_agent_workspace(command, project_path))
 }
 
 fn is_shell_command_scoped_to_agent_workspace(command: &str, project_path: &str) -> bool {
@@ -3932,6 +3992,51 @@ fn tool_emit_event(
     tool_events.push(tool_event);
 }
 
+/// 与普通生成共用取消边界，但保留模型结束信息以定位不完整工具响应。
+async fn generate_response_with_cancellation(
+    client: &LlmClient, system: &str, user: &str,
+    images: &[super::types::AgentImage], cancellation: Option<&AgentCancellationToken>,
+) -> Result<AgentLlmResponse, String> {
+    if let Some(token) = cancellation {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err("Agent turn cancelled".to_string()),
+            result = client.generate_response(system, user, images) => result,
+        }
+    } else {
+        client.generate_response(system, user, images).await
+    }
+}
+
+/// 只在解析失败时记录原始响应，最多保留十份；不保存请求、请求头或凭据。
+fn save_agent_json_diagnostic(
+    project_path: &str, provider: &str, model: &str, json_output_enabled: bool,
+    response: &AgentLlmResponse, parse_error: &str,
+) -> Result<String, String> {
+    let relative_dir = ".llm-wiki/diagnostics/agent-json";
+    let dir = Path::new(project_path).join(relative_dir);
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let relative_path = format!("{relative_dir}/{}.json", Uuid::new_v4());
+    let path = Path::new(project_path).join(&relative_path);
+    let record = serde_json::json!({
+        "provider": provider, "model": model, "jsonOutputEnabled": json_output_enabled,
+        "finishReason": response.finish_reason, "outputTokens": response.output_tokens,
+        "responseChars": response.text.chars().count(), "responseBytes": response.text.len(),
+        "parseError": parse_error, "rawResponse": response.text,
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&record).map_err(|err| err.to_string())?)
+        .map_err(|err| err.to_string())?;
+    let mut previous: Vec<PathBuf> = fs::read_dir(&dir).map_err(|err| err.to_string())?
+        .filter_map(Result::ok).map(|entry| entry.path())
+        .filter(|entry| entry != &path && entry.is_file() && entry.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    previous.sort_by_key(|entry| fs::metadata(entry).and_then(|meta| meta.modified()).ok());
+    for obsolete in previous.iter().rev().skip(9) {
+        let _ = fs::remove_file(obsolete);
+    }
+    Ok(relative_path)
+}
+
 async fn generate_with_cancellation<P: AgentLlmProvider>(
     provider: &P,
     system: &str,
@@ -4042,6 +4147,178 @@ mod tests {
             std::env::temp_dir().join(format!("llm-wiki-agent-test-{name}-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("wiki").join("concepts")).unwrap();
         root
+    }
+
+    /// 格式错误和非检索工具被拒绝都应在原预算内收尾，并保留观察记录。
+    #[tokio::test]
+    async fn agent_loop_reserves_final_turn_after_rejected_actions() {
+        for (action, observation) in [
+            (
+                r#"{"action":"tool","tool":"wiki.read_page","path":"wiki/faqs/"#,
+                "JSON parse failure: category=Eof",
+            ),
+            (
+                r#"{"action":"tool","tool":"shell.exec","command":"echo test"}"#,
+                "shell.exec is only available",
+            ),
+        ] {
+            assert_agent_loop_final_turn(action, observation).await;
+        }
+    }
+
+    /// 复现工作区工具误写 Wiki、随后 JSON 截断的链路，验证纠错反馈及实际覆盖结果。
+    #[tokio::test]
+    async fn agent_loop_recovers_from_wrong_wiki_write_tool_and_truncated_json() {
+        let project = temp_project("wiki-write-recovery");
+        fs::create_dir_all(project.join("wiki/faqs")).unwrap();
+        let page_path = "wiki/faqs/review-fix.md";
+        fs::write(project.join(page_path), "old content").unwrap();
+        let content = "---\ntitle: 修复后的页面\n---\n引用：\"字段\"，路径 C:\\docs。";
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1", server.server_addr());
+        let responses = vec![
+            serde_json::json!({"action": "tool", "tool": "workspace.write_file", "path": page_path, "content": content}).to_string(),
+            r#"{"action":"tool","tool":"wiki.write_page","path":"wiki/faqs/review-fix.md","content":"unfinished"#.to_string(),
+            // 纠正工具后，仍模拟字符串内未转义的真实换行；必须直接保留正文写入。
+            serde_json::json!({"action": "tool", "tool": "wiki.write_page", "path": page_path, "content": content, "allowOverwrite": true}).to_string().replace("\\n", "\n"),
+            serde_json::json!({"action": "final", "answer": "已修改页面。"}).to_string(),
+        ];
+        let worker = std::thread::spawn(move || {
+            let mut prompts = Vec::new();
+            for content in responses {
+                let mut request = server
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap().expect("expected next model request");
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                prompts.push(serde_json::from_str::<Value>(&body).unwrap());
+                let response = serde_json::json!({"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"completion_tokens": 123}});
+                request.respond(tiny_http::Response::from_string(response.to_string())
+                    .with_header(tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap())).unwrap();
+            }
+            prompts
+        });
+        let config: LlmConfig = serde_json::from_value(serde_json::json!({
+            "provider": "custom", "model": "test", "customEndpoint": endpoint,
+            "streamingEnabled": false
+        })).unwrap();
+        let runtime = AgentRuntime::new("test", project.to_string_lossy(), None, Some(config), None, None);
+        let response = runtime.run_once(AgentChatRequest {
+            message: "请修改 wiki/faqs/review-fix.md，覆盖旧内容".to_string(),
+            ..Default::default()
+        }).await.unwrap();
+        let prompts = worker.join().unwrap();
+        let written = fs::read_to_string(project.join(page_path)).unwrap();
+        let misplaced_file = project.join("agent-workspace").join(page_path).exists();
+        let diagnostic_file = fs::read_dir(project.join(".llm-wiki/diagnostics/agent-json"))
+            .unwrap().next().unwrap().unwrap().path();
+        let diagnostic: Value = serde_json::from_slice(&fs::read(diagnostic_file).unwrap()).unwrap();
+        fs::remove_dir_all(project).unwrap();
+
+        assert_eq!(prompts[0]["max_tokens"], 32_768, "实际 Agent 请求使用 32K 输出预算");
+        assert_eq!(diagnostic["finishReason"], "stop");
+        assert_eq!(diagnostic["outputTokens"], 123);
+        assert_eq!(diagnostic["jsonOutputEnabled"], false);
+        assert!(diagnostic["rawResponse"].as_str().unwrap().ends_with("unfinished"));
+        assert_eq!(response.message, "已修改页面。");
+        assert_eq!(written, content, "完整写回中文、引号、换行和反斜杠");
+        assert!(!misplaced_file, "不能把 Wiki 改动写成工作区副本");
+        assert!(response.tool_events.iter().any(|event| event.tool == "wiki.write_page" && event.status == "completed"));
+        let path_error_prompt = prompts[1]["messages"][1]["content"].as_str().unwrap();
+        assert!(path_error_prompt.contains("Use wiki.write_page"), "路径错误必须指出正确工具");
+        let json_error_prompt = prompts[2]["messages"][1]["content"].as_str().unwrap();
+        assert!(json_error_prompt.contains("Do not switch Wiki edits to workspace.write_file"));
+        assert!(json_error_prompt.contains("allowOverwrite"));
+    }
+
+    /// 错误原文和结束信息只存到项目本地，旧记录自动淘汰以限制磁盘占用。
+    #[test]
+    fn failed_action_diagnostics_keep_raw_response_and_bounded_history() {
+        let project = temp_project("json-diagnostic");
+        let response = AgentLlmResponse {
+            text: "{\"action\":\"tool\",\"content\":\"中文".to_string(),
+            finish_reason: Some("stop".to_string()), output_tokens: Some(451),
+        };
+        let mut latest = String::new();
+        for _ in 0..12 {
+            latest = save_agent_json_diagnostic(
+                project.to_str().unwrap(), "custom", "test", true, &response, "EOF",
+            ).unwrap();
+        }
+        let record: Value = serde_json::from_slice(&fs::read(project.join(&latest)).unwrap()).unwrap();
+        let count = fs::read_dir(project.join(".llm-wiki/diagnostics/agent-json")).unwrap().count();
+        fs::remove_dir_all(project).unwrap();
+
+        assert_eq!(count, 10);
+        assert_eq!(record["rawResponse"], response.text);
+        assert_eq!(record["finishReason"], "stop");
+        assert_eq!(record["outputTokens"], 451);
+        assert_eq!(record["jsonOutputEnabled"], true);
+        assert!(record["responseBytes"].as_u64() > record["responseChars"].as_u64());
+    }
+
+    /// 仅替换 HTTP 模型响应，保留运行时、协议解析和工具拒绝的完整调用链。
+    async fn assert_agent_loop_final_turn(action: &'static str, observation: &str) {
+        let max_iterations = agent_loop_iteration_budget(AgentMode::Standard);
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1", server.server_addr());
+        let worker = std::thread::spawn(move || {
+            let mut prompts = Vec::new();
+            for _ in 0..max_iterations {
+                let mut request = server
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap()
+                    .expect("Agent should request the next model response");
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                let payload: Value = serde_json::from_str(&body).unwrap();
+                let system = payload["messages"][0]["content"].as_str().unwrap();
+                let content = if system.contains("No tools are available now") {
+                    r#"{"action":"final","answer":"现有附件不足以核实文件名，需要补充目录证据；未修改页面。"}"#
+                } else {
+                    action
+                };
+                let response = serde_json::json!({
+                    "choices": [{"message": {"role": "assistant", "content": content}}]
+                });
+                request
+                    .respond(tiny_http::Response::from_string(response.to_string()).with_header(
+                        tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap(),
+                    ))
+                    .unwrap();
+                prompts.push(payload);
+            }
+            prompts
+        });
+        let project = temp_project("final-turn");
+        let config: LlmConfig = serde_json::from_value(serde_json::json!({
+            "provider": "custom", "model": "test", "customEndpoint": endpoint,
+            "streamingEnabled": false
+        }))
+        .unwrap();
+        let runtime = AgentRuntime::new(
+            "project-1", project.to_string_lossy(), None, Some(config), None, None,
+        );
+        let response = runtime
+            .run_once(AgentChatRequest {
+                message: "核实审阅问题中的文件名".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let prompts = worker.join().unwrap();
+        fs::remove_dir_all(project).unwrap();
+
+        assert_eq!(prompts.len(), max_iterations, "收尾不应增加调用上限");
+        assert_eq!(
+            response.message,
+            "现有附件不足以核实文件名，需要补充目录证据；未修改页面。"
+        );
+        assert!(!response.message.contains("tool-iteration limit"));
+        assert!(prompts[max_iterations - 1]["messages"][0]["content"]
+            .as_str().unwrap().contains("No tools are available now"));
+        assert!(prompts[max_iterations - 1]["messages"][1]["content"]
+            .as_str().unwrap().contains(observation));
     }
 
     #[tokio::test]
@@ -4681,14 +4958,11 @@ mod tests {
     }
 
     #[test]
-    fn agent_loop_iteration_budget_expands_only_for_skill_turns() {
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Fast, false), 4);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Standard, false), 8);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Deep, false), 12);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Fast, true), 8);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Standard, true), 16);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::LocalFirst, true), 16);
-        assert_eq!(agent_loop_iteration_budget(AgentMode::Deep, true), 20);
+    fn agent_loop_iteration_budget_matches_requested_mode_limits() {
+        assert_eq!(agent_loop_iteration_budget(AgentMode::Fast), 20);
+        assert_eq!(agent_loop_iteration_budget(AgentMode::Standard), 30);
+        assert_eq!(agent_loop_iteration_budget(AgentMode::LocalFirst), 30);
+        assert_eq!(agent_loop_iteration_budget(AgentMode::Deep), 60);
     }
 
     #[test]
@@ -4757,6 +5031,15 @@ mod tests {
     }
 
     #[test]
+    fn review_choices_are_available_without_active_skills() {
+        let request = AgentChatRequest::default();
+        let prompt = build_agent_loop_user("核查审阅问题", &request, &[], &[], 0, 8, false);
+        assert!(prompt.contains("- user.ask:"));
+        assert!(prompt.contains("single-choice, multi-choice, or confirmation"));
+        assert!(!prompt.contains("- skill.read_file:"));
+    }
+
+    #[test]
     fn faithful_retrieval_prompt_limits_answer_evidence_to_raw_sources() {
         let request = AgentChatRequest {
             retrieval_mode: AgentRetrievalMode::Faithful,
@@ -4807,6 +5090,7 @@ mod tests {
             references: &[],
             retrieval_summary: "",
             explicit_files: &[],
+            review_context: None,
         });
         assert!(!built.system.contains("generated overview evidence"));
         assert!(!built.system.contains("domain schema evidence"));
@@ -4883,12 +5167,6 @@ mod tests {
         assert!(prompt.contains("A generated workspace file has already been observed"));
         assert!(prompt.contains("Budget is nearly exhausted"));
         assert!(prompt.contains(r#"{"action":"final","answer":"..."}"#));
-    }
-
-    #[test]
-    fn agent_structured_output_budget_expands_for_skill_turns() {
-        assert_eq!(agent_structured_max_tokens(false), 8192);
-        assert_eq!(agent_structured_max_tokens(true), 16384);
     }
 
     #[test]
@@ -4995,6 +5273,58 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("workspace.append_file"));
+    }
+
+    /// 保留 serde 的分类和位置，区分未闭合字符串、非法转义和字段类型不匹配。
+    #[test]
+    fn invalid_action_reports_specific_json_parse_failure() {
+        for (raw, category) in [
+            (r#"{"action":"tool","content":"unfinished"#, "Eof"),
+            (r#"{"action":"tool","content":"C:\docs"}"#, "Syntax"),
+            (r#"{"action":"tool","path":123}"#, "Data"),
+        ] {
+            let action = parse_agent_loop_action(raw);
+            assert_eq!(action.action, "invalid_tool_json");
+            let detail = action.answer.unwrap();
+            assert!(detail.contains(&format!("category={category}")), "{detail}");
+            assert!(detail.contains("line=1"));
+            assert!(detail.contains("column="));
+            assert!(detail.contains("response_chars="));
+        }
+    }
+
+    /// 模拟供应商把 JSON 字符串中的换行、回车、制表符直接输出为原字符。
+    #[test]
+    fn agent_action_accepts_literal_whitespace_controls_without_changing_content() {
+        let content = "---\r\ntitle: 中文页面\r\n---\n正文：\"字段\"\n\t路径：C:\\docs\\file.md\n结尾\\\"";
+        let valid = serde_json::json!({
+            "action": "tool", "tool": "wiki.write_page", "path": "wiki/faqs/test.md",
+            "content": content, "allowOverwrite": true
+        }).to_string();
+        let broken = valid.replace("\\r", "\r").replace("\\n", "\n").replace("\\t", "\t");
+        assert!(serde_json::from_str::<Value>(&broken).is_err());
+        for raw in [broken.clone(), format!("```json\n{broken}\n```")] {
+            let action = parse_agent_loop_action(&raw);
+            assert_eq!(action.action, "tool");
+            assert_eq!(action.tool.as_deref(), Some("wiki.write_page"));
+            assert_eq!(action.path.as_deref(), Some("wiki/faqs/test.md"));
+            assert_eq!(action.content.as_deref(), Some(content));
+            assert_eq!(action.allow_overwrite, Some(true));
+        }
+    }
+
+    /// 容错不能补闭合符、猜测引号边界、吞掉非法转义，或接受 NUL 等非空白控制字符。
+    #[test]
+    fn agent_action_keeps_ambiguous_or_incomplete_json_rejected() {
+        for raw in [
+            "{\"action\":\"tool\",\"content\":\"one\ntwo",
+            "{\"action\":\"tool\",\"content\":\"one\n\"two\"\"}",
+            "{\"action\":\"tool\",\"content\":\"one\nC:\\docs\"}",
+            "{\"action\":\"tool\",\"content\":\"one\n\0two\"}",
+            "{\"action\":\"tool\",\"content\":\"one\\\ntwo\"}",
+        ] {
+            assert_eq!(parse_agent_loop_action(raw).action, "invalid_tool_json");
+        }
     }
 
     #[test]
@@ -5264,7 +5594,18 @@ mod tests {
             summary: "The Agent needs approval before it can run this command".to_string(),
         };
 
-        assert!(is_shell_approval_required_observation(&observation));
+        assert!(is_human_approval_required_observation(&observation));
+    }
+
+    #[test]
+    fn file_approval_observation_stops_the_loop_instead_of_retrying_or_using_shell() {
+        let mut observation = AgentObservation {
+            tool: "wiki.write_page".to_string(),
+            summary: "failed: FILE_APPROVAL_REQUIRED: proposal is pending human review".to_string(),
+        };
+        assert!(is_human_approval_required_observation(&observation));
+        observation.tool = "wiki.read_page".to_string();
+        assert!(!is_human_approval_required_observation(&observation));
     }
 
     #[test]
@@ -5734,6 +6075,22 @@ mod tests {
             &["echo safe".to_string()],
             project,
         ));
+    }
+
+    #[test]
+    fn file_approval_protection_requires_exact_shell_approval_even_for_workspace_commands() {
+        let root = temp_project("file-approval-shell");
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        let file = root.join("wiki/policy.md");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "important policy").unwrap();
+        crate::commands::file_approval::set_important_file(
+            root.to_string_lossy().into_owned(), file.to_string_lossy().into_owned(), true,
+        ).unwrap();
+        let command = "node scripts/update.js";
+        assert!(!is_shell_command_allowed_without_prompt(command, &[], root.to_str().unwrap()));
+        assert!(is_shell_command_allowed_without_prompt(command, &[command.to_string()], root.to_str().unwrap()));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

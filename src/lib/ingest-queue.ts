@@ -6,6 +6,7 @@ import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { IngestCommitCoordinator } from "@/lib/ingest-commit-coordinator"
 import { clampUserConcurrency } from "@/lib/concurrency-limits"
+import { isFileApprovalRequired } from "@/lib/file-approval-error"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -581,6 +582,21 @@ export async function cancelTasks(taskIds: readonly string[]): Promise<number> {
   return targets.length
 }
 
+/** 删除当前项目选中的失败/已取消记录，仅更新队列，不清理来源及知识页面。 */
+export async function removeStoppedTasks(taskIds: readonly string[]): Promise<number> {
+  if (!currentProjectId || taskIds.length === 0) return 0
+  const selected = new Set(taskIds)
+  const previousCount = queue.length
+  queue = queue.filter((task) => !(
+    task.projectId === currentProjectId &&
+    selected.has(task.id) &&
+    (task.status === "failed" || task.status === "cancelled")
+  ))
+  const removed = previousCount - queue.length
+  if (removed > 0) await saveQueue(currentProjectPath)
+  return removed
+}
+
 /**
  * Permanently discard active-project tasks for sources that no longer exist.
  * Unlike cancelTasks, this does not retain restartable queue entries because
@@ -1041,9 +1057,10 @@ async function runTask(
 
     const message = err instanceof Error ? err.message : String(err)
     if (
-      err instanceof Error
+      isFileApprovalRequired(err)
+      || (err instanceof Error
       && "nonRetryable" in err
-      && (err as Error & { nonRetryable?: unknown }).nonRetryable === true
+      && (err as Error & { nonRetryable?: unknown }).nonRetryable === true)
     ) {
       task.status = "failed"
       task.error = message

@@ -1245,6 +1245,7 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
         run_guarded("write_file", || {
             require_absolute_path("write_file", &path)?;
             let p = Path::new(&path);
+            let _approval = super::file_approval::guard_mutation(p, Some(contents.as_bytes()), "write_file")?;
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
@@ -1277,6 +1278,7 @@ pub async fn write_file_base64(path: String, base64: String) -> Result<(), Strin
                 .decode(base64.as_bytes())
                 .map_err(|e| format!("Invalid base64 for '{}': {}", path, e))?;
             let p = Path::new(&path);
+            let _approval = super::file_approval::guard_mutation(p, Some(&bytes), "write_file_base64")?;
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
@@ -1298,6 +1300,7 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
         run_guarded("write_file_atomic", || {
             require_absolute_path("write_file_atomic", &path)?;
             let p = Path::new(&path);
+            let _approval = super::file_approval::guard_mutation(p, Some(contents.as_bytes()), "write_file_atomic")?;
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
@@ -1370,6 +1373,7 @@ fn apply_text_selection_edit_inner(
         );
     }
     let updated = format!("{prefix}{replacement}{suffix}");
+    let _approval = super::file_approval::guard_mutation(&file, Some(updated.as_bytes()), "agent.selection_edit")?;
     file_sync::mark_app_write_path(&file);
     crate::commands::file_history::record_file_version(
         &file,
@@ -1497,7 +1501,7 @@ fn safe_missing_page_stem(title: &str) -> String {
     let mut stem = title
         .chars()
         .map(|character| {
-            if character.is_control()
+            if super::vectorstore::is_disallowed_page_id_char(character)
                 || matches!(
                     character,
                     '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
@@ -1661,6 +1665,7 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_file", || {
             let dest = Path::new(&destination);
+            let _approval = super::file_approval::guard_copy(dest, Path::new(&source))?;
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
@@ -1716,6 +1721,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
                     if path.is_dir() {
                         copy_recursive(&path, &dest_path, files)?;
                     } else {
+                        let _approval = super::file_approval::guard_copy(&dest_path, &path)?;
                         fs::copy(&path, &dest_path)
                             .map_err(|e| format!("Failed to copy '{}': {}", path.display(), e))?;
                         file_sync::mark_app_write_path(&dest_path);
@@ -1738,6 +1744,7 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
             let p = Path::new(&path);
+            let _approval = super::file_approval::guard_mutation(p, None, "delete_file")?;
             file_sync::mark_app_write_path(p);
             if p.is_dir() {
                 remove_path_with_retry(&path, true)
@@ -3038,6 +3045,24 @@ mod tests {
             "user changed the file"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_link_page_generates_indexable_name_and_preserves_title() {
+        let root = make_temp_dir("missing-link-indexable");
+        std::fs::create_dir_all(root.join("wiki")).unwrap();
+        // 文件名替换索引禁用字符；用户可见标题和正文保留原始内容。
+        let title = "Can't find\u{200b} attribute";
+        let relative = create_missing_wiki_page_inner(root.to_str().unwrap(), title, None).unwrap();
+        assert_eq!(relative, "wiki/concepts/Can-t find- attribute.md");
+        let page_id = relative
+            .strip_prefix("wiki/")
+            .unwrap()
+            .strip_suffix(".md")
+            .unwrap();
+        assert!(crate::commands::vectorstore::validate_page_id_for_v2(page_id).is_ok());
+        assert!(std::fs::read_to_string(root.join(relative)).unwrap().contains(title));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

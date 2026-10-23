@@ -5,9 +5,12 @@ import { IconSidebar } from "./icon-sidebar"
 import { UpdateBanner } from "./update-banner"
 import { SidebarPanel } from "./sidebar-panel"
 import { ContentArea } from "./content-area"
-import { ResearchPanel } from "./research-panel"
+import { WorkspaceRightPanel } from "./workspace-right-panel"
 import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
+import { useReviewChatStore } from "@/stores/review-chat-store"
+import { useChatStore } from "@/stores/chat-store"
+import { normalizePath } from "@/lib/path-utils"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
 import { PanelLeftOpen } from "lucide-react"
@@ -24,6 +27,11 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
+  const reviewSession = useReviewChatStore((s) => s.session)
+  const conversations = useChatStore((s) => s.conversations)
+  const reviewConversationId = reviewSession?.projectPath === normalizePath(project?.path ?? "")
+    && conversations.some((conversation) => conversation.id === reviewSession.conversationId)
+    ? reviewSession.conversationId : undefined
   const [leftWidth, setLeftWidth] = useState(220)
   const [rightWidth, setRightWidth] = useState(400)
   const [leftCollapsed, setLeftCollapsed] = useState(
@@ -89,7 +97,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   // Settings and Chat are standalone views. Hide the project file tree,
   // activity strip, and optional right research panel there so those
   // screens use the whole work area.
-  const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
+  const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen, Boolean(reviewConversationId))
   const toggleLeftPanel = () => {
     setLeftCollapsed((value) => {
       const next = !value
@@ -161,7 +169,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 style={{ width: rightWidth }}
               >
                 <ErrorBoundary>
-                  <ResearchPanel />
+                  <WorkspaceRightPanel conversationId={reviewConversationId} />
                 </ErrorBoundary>
               </div>
             </>

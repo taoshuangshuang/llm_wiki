@@ -99,7 +99,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           status: { type: "string", enum: ["unresolved", "resolved", "all"], description: "Review status filter. Defaults to unresolved." },
-          type: { type: "string", description: "Optional Review item type filter, for example missing-page, duplicate, contradiction, confirm, or suggestion." },
+          type: { type: "string", description: "Optional Review item type filter, for example missing-page, duplicate, contradiction, confirm, suggestion, structure, or coverage." },
           limit: { type: "number", description: "Maximum review items returned. The local API clamps to its configured maximum." },
         },
         additionalProperties: false,

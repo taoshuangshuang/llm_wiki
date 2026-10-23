@@ -18,25 +18,35 @@ export function ContentArea() {
   // its scroll position, expanded folders, and incremental row limit. Hiding
   // the mounted view makes closing the preview a true return operation.
   const [hasMountedSources, setHasMountedSources] = useState(activeView === "sources")
+  // 页签切换只隐藏聊天；真正卸载或切换项目时仍由 ChatPanel 释放请求。
+  const [hasMountedChat, setHasMountedChat] = useState(activeView === "chat")
 
   useEffect(() => {
     if (activeView === "sources") setHasMountedSources(true)
+    if (activeView === "chat") setHasMountedChat(true)
   }, [activeView])
 
   // Include the current view directly so the first navigation to Sources does
   // not wait for the effect above and briefly render an empty content area.
-  if (hasMountedSources || activeView === "sources") {
-    return (
-      <>
-        <div className={activeView === "sources" ? "h-full" : "hidden"}>
+  // 首次进入时立即渲染，并保持各视图的位置固定，避免首次打开来源页
+  // 改变组件树结构而重建聊天，进而取消仍在生成的任务。
+  return (
+    <>
+      {(hasMountedChat || activeView === "chat") && (
+        <div key="chat" className={activeView === "chat" ? "h-full" : "hidden"}>
+          <ChatPanel />
+        </div>
+      )}
+      {(hasMountedSources || activeView === "sources") && (
+        <div key="sources" className={activeView === "sources" ? "h-full" : "hidden"}>
           <SourcesView />
         </div>
-        {activeView !== "sources" && <ActiveContent activeView={activeView} />}
-      </>
-    )
-  }
-
-  return <ActiveContent activeView={activeView} />
+      )}
+      {activeView !== "chat" && activeView !== "sources" && (
+        <ActiveContent key="active" activeView={activeView} />
+      )}
+    </>
+  )
 }
 
 function ActiveContent({
@@ -46,7 +56,7 @@ function ActiveContent({
 }) {
   switch (activeView) {
     case "chat":
-      return <ChatPanel />
+      return null
     case "wiki":
       return <PreviewPanel />
     case "settings":

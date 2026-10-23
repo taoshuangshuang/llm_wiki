@@ -38,6 +38,7 @@ beforeEach(() => {
   mockDeleteFile.mockResolvedValue(undefined)
   mockRemovePageEmbedding.mockResolvedValue(undefined)
   mockWriteFile.mockResolvedValue(undefined)
+  mockListDirectory.mockResolvedValue([])
 })
 
 describe("cascadeDeleteWikiPage", () => {
@@ -146,6 +147,18 @@ describe("cascadeDeleteWikiPage", () => {
     expect(mockDeleteFile).toHaveBeenNthCalledWith(1, "/proj/wiki/sources/rope-paper.md")
     expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "/proj/wiki/media/rope-paper")
     expect(mockRemovePageEmbedding).toHaveBeenCalledWith("/proj", "sources/rope-paper")
+  })
+
+  it("删除旧摘要不能删除仍被知识页引用的配图", async () => {
+    mockListDirectory.mockImplementation(async (path) => path === "/proj/wiki" ? [
+      { name: "concepts", path: "/proj/wiki/concepts", is_dir: true },
+    ] : [
+      { name: "知识.md", path: "/proj/wiki/concepts/知识.md", is_dir: false },
+    ])
+    mockReadFile.mockResolvedValue("# 知识\n![配图](../media/rope-paper/diagram.png)")
+    await cascadeDeleteWikiPage("/proj", "/proj/wiki/sources/rope-paper.md")
+    expect(mockDeleteFile).toHaveBeenCalledWith("/proj/wiki/sources/rope-paper.md")
+    expect(mockDeleteFile).not.toHaveBeenCalledWith("/proj/wiki/media/rope-paper")
   })
 
   it("does NOT cascade media when deleting a non-source page (concept / entity / queries)", async () => {

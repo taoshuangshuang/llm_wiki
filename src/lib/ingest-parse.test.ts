@@ -34,7 +34,67 @@ import {
   filterTruncatedFileRepairOutput,
 } from "./ingest"
 
+import { correctWikiPageRouting } from "./wiki-schema"
+import { normalizeWikiFileLinks } from "./ingest-sanitize"
+
 // ── Happy paths ─────────────────────────────────────────────────────
+
+describe("知识页 FILE 路径规范化", () => {
+  // 与向量索引的页面 ID 约定保持一致，在生成入口拒绝不可索引的名称。
+  it.each(["Can't find attribute", "quoted\"name", "zero\u200bwidth", "control\u007fname"])(
+    "拒绝不可索引的文件名 %s，同时保留合法页面及其正文", (name) => {
+      const path = `wiki/cases/${name}.md`
+      const content = "# Can't find attribute\n正文允许单引号 '。"
+      const result = parseFileBlocks([
+        `---FILE: ${path}---\n问题页面\n---END FILE---`,
+        `---FILE: wiki/cases/cant-find-attribute.md---\n${content}\n---END FILE---`,
+      ].join("\n"))
+      expect(result.blocks).toEqual([{ path: "wiki/cases/cant-find-attribute.md", content }])
+      expect(result.warnings.some((warning) => warning.includes("unsafe path"))).toBe(true)
+    },
+  )
+
+  it("按 Unicode 字符校验相对页面 ID 的长度上限", () => {
+    // 目录也计入 256 字符限制；.md 后缀和 wiki/ 前缀不计入。
+    expect(isSafeIngestPath(`wiki/cases/${"𠮷".repeat(250)}.md`)).toBe(true)
+    expect(isSafeIngestPath(`wiki/cases/${"𠮷".repeat(251)}.md`)).toBe(false)
+  })
+
+  // FILE 块承载 Markdown 页面；文件名可以包含中文、类名中的点或来源扩展名。
+  it.each([
+    ["wiki/concepts/类型映射", "wiki/concepts/类型映射.md"],
+    ["wiki/concepts/type-mapping", "wiki/concepts/type-mapping.md"],
+    ["wiki/concepts/org.imeta.core", "wiki/concepts/org.imeta.core.md"],
+    ["wiki/concepts/类型映射.pdf", "wiki/concepts/类型映射.pdf.md"],
+    ["wiki/concepts/类型映射.MD", "wiki/concepts/类型映射.md"],
+    ["wiki/concepts/类型映射.md", "wiki/concepts/类型映射.md"],
+  ])("将 %s 解析为 %s", (inputPath, expectedPath) => {
+    const result = parseFileBlocks(`---FILE: ${inputPath}---\n# 类型映射\n---END FILE---`)
+    expect(result.blocks).toEqual([{ path: expectedPath, content: "# 类型映射" }])
+    expect(result.warnings).toEqual([])
+  })
+
+  it("截断记录和修复输出使用同一个 Markdown 路径", () => {
+    const path = "wiki/concepts/类型映射"
+    const truncated = parseFileBlocks(`---FILE: ${path}---\n# 类型映射`)
+    expect(truncated.truncatedPaths).toEqual([`${path}.md`])
+    expect(truncated.warnings[0]).toContain(`"${path}.md"`)
+    const repaired = filterTruncatedFileRepairOutput(
+      `---FILE: ${path}---\n# 类型映射\n---END FILE---`, truncated.truncatedPaths,
+    )
+    expect(repaired.paths).toEqual([`${path}.md`])
+    expect(repaired.warnings).toEqual([])
+  })
+
+  // 先校验原始路径，防止补后缀将尾部点号等原本非法的路径变为可写路径。
+  it.each(["wiki/../escape", "/tmp/escape", "wiki/concepts/", "wiki/concepts/名称."])(
+    "补后缀不能放行不安全路径 %s", (path) => {
+      const result = parseFileBlocks(`---FILE: ${path}---\n正文\n---END FILE---`)
+      expect(result.blocks).toEqual([])
+      expect(result.warnings[0]).toContain("unsafe path")
+    },
+  )
+})
 
 describe("parseFileBlocks — canonical shapes", () => {
   it("extracts a single well-formed block", () => {
@@ -602,7 +662,7 @@ describe("generated ingest dates", () => {
     const prompt = buildGenerationPrompt("", "", "", "schema.sql")
     const analysisPrompt = buildAnalysisPrompt("", "", "CREATE TABLE users (id BIGINT PRIMARY KEY);")
 
-    expect(prompt).toContain("Preserve structured source data verbatim")
+    expect(prompt).toContain("将 SQL DDL、表结构、接口签名、配置及映射表保留在对应知识页中")
     expect(prompt).toContain("DDL")
     expect(analysisPrompt).toContain("Preserve structured source data verbatim")
     expect(analysisPrompt).toContain("constraints, keys, or indexes")
@@ -610,6 +670,28 @@ describe("generated ingest dates", () => {
 })
 
 describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
+  // 覆盖 FILE 解析、文件命名、类型路由和正文引用的完整转换链路。
+  it.each(["/", "\\"])("标题中的 %s 转为连字符，路由后仍保留完整名称", (separator) => {
+    const title = `YPD常见问题排查指引（动作${separator}插件${separator}发布${separator}拦截器）`
+    const content = `---\ntype: faq\ntitle: '${title}'\n---\n# ${title}`
+    const { blocks } = parseFileBlocks(`---FILE: wiki/faqs/${title}.md---\n${content}\n---END FILE---`)
+    expect(blocks).toHaveLength(1)
+    const rewritten = rewriteIngestPathFromTitleForTargetLanguage(blocks[0].path, blocks[0].content, "auto")
+    const routed = correctWikiPageRouting(rewritten, content, { typeDirs: { faq: "wiki/faqs" } })
+    const fileName = "YPD常见问题排查指引（动作-插件-发布-拦截器）"
+    expect(routed.path).toBe(`wiki/faqs/${fileName}.md`)
+    expect(blocks[0].content).toBe(content)
+    expect(normalizeWikiFileLinks(`[[${title}]]`, [routed.path], new Map([[title, routed.path]])))
+      .toBe(`[[${fileName}]]`)
+  })
+
+  it("只替换标题中的分隔符，保留真实的多级目录", () => {
+    const title = "MySQL/Oracle"
+    const content = `---\ntitle: ${title}\n---\n正文`
+    expect(rewriteIngestPathFromTitleForTargetLanguage(`wiki/custom/database/${title}.md`, content, "auto"))
+      .toBe("wiki/custom/database/MySQL-Oracle.md")
+  })
+
   it("uses the CJK page title for generated page filenames when the target language is CJK", () => {
     const content = [
       "---",

@@ -13,6 +13,7 @@ import { streamChat } from "@/lib/llm-client"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { searchWiki, type SearchResult } from "@/lib/search"
 import { normalizePath } from "@/lib/path-utils"
+import { ImportantFileButton } from "@/components/review/file-approval-panel"
 
 interface EditorSelectionRequest {
   id: string
@@ -280,7 +281,9 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
     } catch (error) {
       console.error("Failed to apply selection edit", error)
       setSelectionError(
-        error instanceof Error && error.message.includes("changed after the selection")
+        String(error).includes("FILE_APPROVAL_REQUIRED")
+          ? t("fileApproval.queued")
+          : String(error).includes("changed after the selection")
           ? t("editor.selection.sourceChanged")
           : t("editor.selection.applyFailed"),
       )
@@ -334,6 +337,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
     >
       <div className="relative min-w-0 flex-1 overflow-hidden">
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+        {filePath && <ImportantFileButton filePath={filePath} />}
         {filePath && (
           <button type="button" onClick={() => { setSelectionRequest(null); setShowPageLinks((shown) => !shown) }} title={t("editor.pageLinks.title")} className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground">
             <Link2 className="h-3.5 w-3.5" />

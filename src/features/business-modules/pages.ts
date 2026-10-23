@@ -5,7 +5,7 @@ import type { FileNode } from "@/types/wiki"
 import { descendantIds, type BusinessModule, type ModuleCatalog } from "./catalog"
 import { readPageModuleIds } from "./page-tags"
 
-export interface ModulePage { path: string; title: string; moduleIds: string[] }
+export interface ModulePage { path: string; title: string; type: string; moduleIds: string[] }
 interface PageReader {
   list: (path: string) => Promise<FileNode[]>
   read: (path: string) => Promise<string>
@@ -44,10 +44,13 @@ export async function loadModulePages(
       if (!/\.md$/i.test(node.name) || [`${root}/index.md`, `${root}/log.md`].map((item) => item.toLowerCase()).includes(path.toLowerCase())) continue
       try {
         const content = await reader.read(path)
-        const title = parseFrontmatter(content).frontmatter?.title
+        const frontmatter = parseFrontmatter(content).frontmatter
+        const title = frontmatter?.title
+        const type = frontmatter?.type
         pages.push({
           path,
           title: typeof title === "string" && title.trim() ? title : node.name.replace(/\.md$/i, ""),
+          type: typeof type === "string" && type.trim() ? type.trim() : "other",
           moduleIds: readPageModuleIds(content, catalog),
         })
       } catch { unreadable.push(path) }
@@ -56,12 +59,22 @@ export async function loadModulePages(
   return { pages, unreadable }
 }
 
-/** 父节点汇总整个子树，跨模块页面按完整路径去重，不按文件名去重。 */
-export function pagesForModule(node: BusinessModule, pages: readonly ModulePage[]): ModulePage[] {
+/** 按子树或直接归属筛选并去重；按 schema 类型顺序排列，同类型按标题和路径排序。 */
+export function pagesForModule(
+  node: BusinessModule, pages: readonly ModulePage[], typeOrder: readonly string[] = [],
+  scope: "subtree" | "direct" = "subtree",
+): ModulePage[] {
   const ids = descendantIds(node)
   const matched = new Map<string, ModulePage>()
   for (const page of pages) {
-    if (page.moduleIds.some((id) => ids.has(id))) matched.set(page.path, page)
+    const matches = scope === "direct"
+      ? page.moduleIds.includes(node.id) && !page.moduleIds.some((id) => id !== node.id && ids.has(id))
+      : page.moduleIds.some((id) => ids.has(id))
+    if (matches) matched.set(page.path, page)
   }
-  return [...matched.values()].sort((a, b) => a.title.localeCompare(b.title) || a.path.localeCompare(b.path))
+  const typeRanks = new Map(typeOrder.map((type, index) => [type, index]))
+  return [...matched.values()].sort((a, b) =>
+    (typeRanks.get(a.type) ?? typeOrder.length) - (typeRanks.get(b.type) ?? typeOrder.length)
+    || a.title.localeCompare(b.title) || a.path.localeCompare(b.path),
+  )
 }

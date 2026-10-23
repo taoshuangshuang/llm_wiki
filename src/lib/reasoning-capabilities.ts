@@ -16,6 +16,15 @@ const THINKING_REQUIRED_LEVELS = ["auto", "low", "medium", "high", "max"] as con
 const OLLAMA_LEVELS = ["auto", "off", "low", "medium", "high", "max"] as const
 const TOGGLE_LEVELS = ["auto", "off"] as const
 const DEEPSEEK_LEVELS = ["auto", "off", "high", "max"] as const
+const GLM_53_LEVELS = ["auto", "low", "high", "max"] as const
+
+/** 仅对核对过协议的智谱官方 GLM-5.3 启用专属思考控制。 */
+export function isBigModelGlm53(config: LlmConfig): boolean {
+  if (config.provider !== "custom" || config.apiMode === "anthropic_messages") return false
+  if (config.model.trim().toLowerCase() !== "glm-5.3") return false
+  try { return new URL(config.customEndpoint).hostname.toLowerCase() === "open.bigmodel.cn" }
+  catch { return false }
+}
 
 function capabilities(
   modes: readonly ReasoningMode[],
@@ -70,6 +79,21 @@ export function isOpenRouterEndpoint(endpoint: string): boolean {
  * request fields.
  */
 export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabilities {
+  if (isBigModelGlm53(config)) {
+    return {
+      ...capabilities(GLM_53_LEVELS),
+      normalize(requested) {
+        // 模型不支持关闭思考；旧入库 off 按最低支持档位执行，不静默退回 max。
+        if (requested.mode === "off") return { mode: "low" }
+        if (requested.mode === "custom") {
+          const budget = requested.budgetTokens ?? 0
+          return { mode: budget >= 8_192 ? "max" : budget >= 4_096 ? "high" : "low" }
+        }
+        if (requested.mode === "medium") return { mode: "high" }
+        return { mode: requested.mode }
+      },
+    }
+  }
   if (config.provider === "claude-code" || config.provider === "codex-cli") {
     return capabilities(AUTO_ONLY)
   }

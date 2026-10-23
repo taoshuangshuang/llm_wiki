@@ -268,6 +268,8 @@ export interface GeneralConfig {
 interface SourceWatchConfig {
   enabled: boolean
   autoIngest: boolean
+  /** 默认不生成来源摘要；需要文档导读时由项目显式开启。 */
+  generateSourceSummary?: boolean
   /** Keep extractor output in raw/parsed in addition to the internal cache. */
   persistExtractedMarkdown: boolean
   /** Maximum number of source text extraction jobs allowed at once. */

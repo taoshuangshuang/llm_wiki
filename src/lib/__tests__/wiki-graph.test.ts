@@ -28,6 +28,41 @@ function mdFile(name: string): FileNode {
 }
 
 describe("buildWikiGraph frontmatter extraction", () => {
+  it("excludes source summaries and their links before counting knowledge relationships", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    const projectPath = "/knowledge-only-graph"
+    const sourcePath = `${projectPath}/wiki/sources/原始资料摘要.md`
+    const customSourcePath = `${projectPath}/wiki/archive/来源摘要.md`
+    const conceptPath = `${projectPath}/wiki/concepts/概念.md`
+    const designPath = `${projectPath}/wiki/designs/设计.md`
+    mockListDirectory.mockResolvedValue([
+      { name: "sources", path: `${projectPath}/wiki/sources`, is_dir: true, children: [
+        { name: "原始资料摘要.md", path: sourcePath, is_dir: false },
+      ] },
+      { name: "来源摘要.md", path: customSourcePath, is_dir: false },
+      { name: "概念.md", path: conceptPath, is_dir: false },
+      { name: "设计.md", path: designPath, is_dir: false },
+    ])
+    const contents: Record<string, string> = {
+      // 旧来源页即使没有 type，也应按目录排除。
+      [sourcePath]: "# 原始资料摘要\n\n[[概念]]\n[[设计]]",
+      [customSourcePath]: "---\ntype: Source\nrelated: [概念, 设计]\n---\n# 来源摘要",
+      [conceptPath]: "---\ntype: concept\n---\n# 概念\n\n[[设计]]\n[[来源摘要]]",
+      [designPath]: "---\ntype: design\n---\n# 设计",
+    }
+    mockReadFile.mockImplementation(async (path: string) => contents[path] ?? "")
+
+    const graph = await buildWikiGraph(projectPath)
+
+    // 来源页及其关联不影响节点数量、连线、连接数或社区统计。
+    expect(graph.nodes.map((node) => node.id)).toEqual(["概念", "设计"])
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ source: "概念", target: "设计" }),
+    ])
+    expect(graph.nodes.map((node) => node.linkCount)).toEqual([1, 1])
+    expect(graph.communities.reduce((total, community) => total + community.nodeCount, 0)).toBe(2)
+  })
+
   it("does not read a title: line from the document body as the frontmatter title", async () => {
     const buildWikiGraph = await loadBuildWikiGraph()
     mockListDirectory.mockResolvedValue([mdFile("page.md")])

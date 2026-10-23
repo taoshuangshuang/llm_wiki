@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { FolderOpen } from "lucide-react"
 import { createProject, writeFile, createDirectory } from "@/commands/fs"
 import { getTemplate } from "@/lib/templates"
+import { initializeProjectIngestPrompts } from "@/lib/ingest-prompts"
 import { TemplatePicker } from "@/components/project/template-picker"
 import type { WikiProject } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
@@ -118,6 +119,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       const template = getTemplate(selectedTemplate)
       await writeFile(`${pp}/schema.md`, template.schema)
       await writeFile(`${pp}/purpose.md`, template.purpose)
+      await initializeProjectIngestPrompts(pp)
       for (const dir of template.extraDirs) {
         await createDirectory(`${pp}/${dir}`)
       }

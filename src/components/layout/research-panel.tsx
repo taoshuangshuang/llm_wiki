@@ -22,7 +22,7 @@ import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 
-export function ResearchPanel() {
+export function ResearchPanel({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation()
   const appDialog = useAppDialog()
   const tasks = useResearchStore((s) => s.tasks)
@@ -80,12 +80,12 @@ export function ResearchPanel() {
             </span>
           )}
         </div>
-        <button
+        {!embedded && <button
           onClick={() => setPanelOpen(false)}
           className="rounded p-1 text-muted-foreground hover:bg-accent"
         >
           <X className="h-3.5 w-3.5" />
-        </button>
+        </button>}
       </div>
 
       {/* Research input */}

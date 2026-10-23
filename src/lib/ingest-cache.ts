@@ -68,12 +68,13 @@ export async function checkIngestCache(
   projectPath: string,
   sourceFileName: string,
   sourceContent: string,
+  contract: string = "",
 ): Promise<string[] | null> {
   const cache = await loadCache(projectPath)
   const entry = cache.entries[sourceFileName]
   if (!entry) return null
 
-  const currentHash = await sha256(sourceContent)
+  const currentHash = await sha256(contract ? JSON.stringify([sourceContent, contract]) : sourceContent)
   if (entry.hash !== currentHash) return null
 
   const pp = normalizePath(projectPath)
@@ -106,9 +107,10 @@ export async function saveIngestCache(
   sourceFileName: string,
   sourceContent: string,
   filesWritten: string[],
+  contract: string = "",
 ): Promise<void> {
   const cache = await loadCache(projectPath)
-  const hash = await sha256(sourceContent)
+  const hash = await sha256(contract ? JSON.stringify([sourceContent, contract]) : sourceContent)
   const newEntries = { ...cache.entries }
   newEntries[sourceFileName] = {
     hash,

@@ -1,7 +1,12 @@
 import { create } from "zustand"
 import type { ChatMessage, ContentBlock } from "@/lib/llm-client"
 import i18n from "@/i18n"
-import type { ChatAgentFileChange, ChatAgentMode, ChatAgentStep, ChatRetrievalMode, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentMode, ChatAgentStep, ChatRetrievalMode, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import type { ReviewItem } from "@/stores/review-store"
+
+/** 审阅会话保留问题快照；即使原条目被移除，也能回看核查依据。 */
+export type ReviewConversationContext = Pick<ReviewItem,
+  "id" | "type" | "title" | "description" | "sourcePath" | "affectedPages">
 
 /**
  * An image attached to a user message. Field names mirror the
@@ -22,6 +27,7 @@ export interface Conversation {
   updatedAt: number
   selectedSkills?: string[]
   contextFiles?: string[]
+  reviewContext?: ReviewConversationContext
 }
 
 export interface MessageReference {
@@ -48,12 +54,20 @@ export interface DisplayMessage {
   contextFiles?: string[]  // absolute project files explicitly attached to this user turn
 }
 
+/** 每个会话独立保存未完成的回答、工具进度和请求标识。 */
+export interface ConversationStream {
+  content: string
+  agentEvents: ChatAgentEvent[]
+  runId?: string
+}
+
 interface ChatState {
   conversations: Conversation[]
   activeConversationId: string | null
   messages: DisplayMessage[]
   isStreaming: boolean
   streamingContent: string
+  conversationStreams: Record<string, ConversationStream>
   mode: "chat" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
@@ -76,8 +90,10 @@ interface ChatState {
   addMessageToConversation: (conversationId: string, role: DisplayMessage["role"], content: string, images?: MessageImage[], contextFiles?: string[]) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
-  setStreaming: (streaming: boolean) => void
-  appendStreamToken: (token: string) => void
+  setStreaming: (streaming: boolean, conversationId?: string, runId?: string) => void
+  appendStreamToken: (token: string, conversationId?: string) => void
+  setStreamContent: (conversationId: string, content: string) => void
+  setStreamEvents: (conversationId: string, events: ChatAgentEvent[] | ((previous: ChatAgentEvent[]) => ChatAgentEvent[])) => void
   finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest, agentFileChanges?: ChatAgentFileChange[]) => void
   finalizeStreamForConversation: (conversationId: string, content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest, agentFileChanges?: ChatAgentFileChange[]) => void
   setMode: (mode: ChatState["mode"]) => void
@@ -108,12 +124,29 @@ function generateConversationId(): string {
   return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** 全局生成标记供自动保存使用，展示缓存始终投影到当前会话。 */
+function streamState(conversationStreams: ChatState["conversationStreams"], activeConversationId: string | null) {
+  return {
+    conversationStreams,
+    isStreaming: Object.keys(conversationStreams).length > 0,
+    streamingContent: conversationStreams[activeConversationId ?? ""]?.content ?? "",
+  }
+}
+
+/** 移除指定会话的流，不影响其他正在生成的会话。 */
+function withoutStream(state: ChatState, conversationId: string, activeConversationId = state.activeConversationId) {
+  const conversationStreams = { ...state.conversationStreams }
+  delete conversationStreams[conversationId]
+  return streamState(conversationStreams, activeConversationId)
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   messages: [],
   isStreaming: false,
   streamingContent: "",
+  conversationStreams: {},
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
@@ -139,8 +172,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       conversations: [newConversation, ...state.conversations],
       activeConversationId: id,
-      isStreaming: false,
-      streamingContent: "",
+      ...streamState(state.conversationStreams, id),
       selectedSkills: [],
       selectedContextFiles: [],
     }))
@@ -158,6 +190,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: remaining,
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
+        ...withoutStream(state, id, newActiveId),
         selectedSkills: remaining.find((conversation) => conversation.id === newActiveId)?.selectedSkills ?? [],
         selectedContextFiles: remaining.find((conversation) => conversation.id === newActiveId)?.contextFiles ?? [],
       }
@@ -166,7 +199,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveConversation: (id) =>
     set((state) => ({
       activeConversationId: id,
-      streamingContent: "",
+      // 切换只改变展示的会话；生成中的缓存仍属于原请求，切回时需要完整恢复。
+      streamingContent: state.conversationStreams[id ?? ""]?.content ?? "",
       selectedSkills: state.conversations.find((conversation) => conversation.id === id)?.selectedSkills ?? [],
       selectedContextFiles: state.conversations.find((conversation) => conversation.id === id)?.contextFiles ?? [],
     })),
@@ -212,7 +246,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     // Image-only first message has empty text; fall
                     // back to a generic title so the sidebar entry
                     // isn't blank.
-                    title: content.slice(0, 50) || (images && images.length > 0 ? i18n.t("chat.imageMessage") : c.title),
+                    title: c.reviewContext ? c.title : content.slice(0, 50) || (images && images.length > 0 ? i18n.t("chat.imageMessage") : c.title),
                     updatedAt: Date.now(),
                   }
                 : c
@@ -238,26 +272,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
       selectedContextFiles: conversations.find((conversation) => conversation.id === state.activeConversationId)?.contextFiles ?? [],
     })),
 
-  setStreaming: (isStreaming) => set((state) => ({
-    isStreaming,
+  setStreaming: (isStreaming, conversationId, runId) => set((state) => {
+    const id = conversationId ?? state.activeConversationId ?? ""
+    if (!isStreaming) return withoutStream(state, id)
     // Each new run owns its own stream buffer. Without this reset, a newly
     // created conversation can briefly render tokens left by another
     // conversation until the next token arrives.
-    ...(isStreaming ? { streamingContent: "" } : state.streamingContent ? {} : {}),
-  })),
+    return streamState({
+      ...state.conversationStreams,
+      [id]: { content: "", agentEvents: [], runId },
+    }, state.activeConversationId)
+  }),
 
-  appendStreamToken: (token) =>
-    set((state) => ({
-      streamingContent: state.streamingContent + token,
-    })),
+  appendStreamToken: (token, conversationId) => {
+    const id = conversationId ?? get().activeConversationId ?? ""
+    const stream = get().conversationStreams[id]
+    if (stream) get().setStreamContent(id, stream.content + token)
+  },
+
+  setStreamContent: (conversationId, content) => set((state) => {
+    const stream = state.conversationStreams[conversationId]
+    if (!stream) return state
+    return streamState({ ...state.conversationStreams, [conversationId]: { ...stream, content } }, state.activeConversationId)
+  }),
+
+  setStreamEvents: (conversationId, events) => set((state) => {
+    const stream = state.conversationStreams[conversationId]
+    if (!stream) return state
+    const agentEvents = typeof events === "function" ? events(stream.agentEvents) : events
+    return { conversationStreams: { ...state.conversationStreams, [conversationId]: { ...stream, agentEvents } } }
+  }),
 
   finalizeStream: (content, references, agentSteps, userInputRequest, agentFileChanges) => {
     const activeConversationId = get().activeConversationId
     if (!activeConversationId) {
-      set({
-        isStreaming: false,
-        streamingContent: "",
-      })
+      get().setStreaming(false)
       return
     }
     get().finalizeStreamForConversation(
@@ -274,10 +323,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const { conversations } = state
       if (!conversations.some((conversation) => conversation.id === conversationId)) {
-        return {
-          isStreaming: false,
-          streamingContent: "",
-        }
+        return withoutStream(state, conversationId)
       }
 
       const newMessage: DisplayMessage = {
@@ -293,8 +339,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       return {
-        isStreaming: false,
-        streamingContent: "",
+        ...withoutStream(state, conversationId),
         messages: [...state.messages, newMessage],
         conversations: conversations.map((c) =>
           c.id === conversationId

@@ -57,6 +57,7 @@ import {
   retryAllFailedTasks,
   cancelTask,
   cancelTasks,
+  removeStoppedTasks,
   discardTasksForSources,
   cancelAllTasks,
   movePendingTask,
@@ -124,6 +125,17 @@ beforeEach(async () => {
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
+  it("待审核修改保留任务和明确原因，不自动重试或重复调用模型", async () => {
+    // 后端 Tauri 可能以字符串拒绝；等待人工决定不属于可自动修复的失败。
+    mockAutoIngest.mockRejectedValue("FILE_APPROVAL_REQUIRED: important file changes are pending human review")
+    await enqueueIngest(TEST_ID, "raw/sources/important.md")
+    await flushMicrotasks(50)
+    expect(mockAutoIngest).toHaveBeenCalledOnce()
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueue()[0]).toMatchObject({ status: "failed", retryCount: 0 })
+    expect(getQueue()[0].error).toContain("FILE_APPROVAL_REQUIRED:")
+  })
+
   it("clamps the configurable worker limit", () => {
     setIngestWorkerLimit(0)
     expect(getIngestWorkerLimit()).toBe(1)
@@ -656,6 +668,57 @@ describe("ingest-queue — cancel", () => {
       "d.md",
       "c.md",
     ])
+  })
+})
+
+describe("ingest-queue — 删除已停止记录", () => {
+  it("只删除选中的失败和已取消记录，并持久化；保留未选中和活动任务", async () => {
+    // 从持久化队列恢复混合状态，模拟用户在有任务运行时勾选多条记录。
+    const statuses = ["failed", "cancelled", "failed", "pending", "pending"] as const
+    mockReadFile.mockResolvedValue(JSON.stringify(statuses.map((status, index) => ({
+      id: `task-${index}`, projectId: TEST_ID,
+      sourcePath: `raw/sources/${index}.md`, folderContext: "", status,
+      addedAt: 1, error: status === "failed" ? "验收未通过" : null, retryCount: 0,
+    }))))
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    await activateProject()
+    await flushMicrotasks(20)
+    expect(getQueue().find((task) => task.id === "task-3")?.status).toBe("processing")
+
+    expect(await removeStoppedTasks(["task-0", "task-0", "task-1", "task-3", "task-4", "task-5", "missing"])).toBe(2)
+    expect(getQueue().map((task) => task.id)).toEqual(["task-2", "task-3", "task-4"])
+    const persisted = String(mockWriteFile.mock.calls[mockWriteFile.mock.calls.length - 1]?.[1])
+    expect(JSON.parse(persisted).map((task: { id: string }) => task.id)).toEqual(["task-2", "task-3", "task-4"])
+    expect(mockDeleteFile).not.toHaveBeenCalled()
+    expect(cascadeDeleteWikiPageMock).not.toHaveBeenCalled()
+
+    // 再次打开项目，已删除记录不能从旧的持久化队列中恢复。
+    mockReadFile.mockResolvedValue(persisted)
+    await activateProject()
+    expect(getQueue().some((task) => task.id === "task-0" || task.id === "task-1")).toBe(false)
+  })
+
+  it("空选择、未知记录和未激活项目不写入队列", async () => {
+    mockWriteFile.mockClear()
+    expect(await removeStoppedTasks([])).toBe(0)
+    expect(await removeStoppedTasks(["missing"])).toBe(0)
+    clearQueueState()
+    expect(await removeStoppedTasks(["missing"])).toBe(0)
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it("删除已取消记录后，未响应中止信号的旧任务完成时不会恢复记录", async () => {
+    const oldRun = createDeferred<string[]>()
+    mockAutoIngest.mockReturnValue(oldRun.promise)
+    const id = await enqueueIngest(TEST_ID, "cancelled.md")
+    await flushMicrotasks(20)
+    await cancelTask(id)
+    expect(await removeStoppedTasks([id])).toBe(1)
+    oldRun.resolve(["wiki/sources/cancelled.md"])
+    await flushMicrotasks(40)
+    expect(getQueue()).toHaveLength(0)
+    expect(getQueueSummary()).toMatchObject({ failed: 0, cancelled: 0, completed: 0 })
+    expect(mockDeleteFile).not.toHaveBeenCalled()
   })
 })
 

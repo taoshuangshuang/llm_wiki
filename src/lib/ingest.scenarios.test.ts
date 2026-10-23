@@ -18,6 +18,10 @@ import { ingestScenarios } from "@/test-helpers/scenarios/ingest-scenarios"
 import type { IngestScenario } from "@/test-helpers/scenarios/types"
 
 vi.mock("@/commands/fs", () => realFs)
+// 保留本组双阶段生成场景；最终验收的补录、复验、冲突由专门集成测试覆盖。
+vi.mock("./ingest-acceptance", () => ({
+  runIngestAcceptance: vi.fn(async () => ({ report: { status: "passed", rounds: [] }, reviews: [] })),
+}))
 
 // Sequenced streamChat: stage-1 returns analysisResponse, stage-2 returns
 // generationResponse. Any further calls return empty (shouldn't happen in a
@@ -58,6 +62,8 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  // 旧来源摘要场景显式开启兼容选项；默认关闭的契约另由最终验收集成测试覆盖。
+  useWikiStore.setState({ sourceWatchConfig: { ...useWikiStore.getState().sourceWatchConfig, generateSourceSummary: true } })
   pendingResponses = []
   streamCallCount = 0
   afterStreamToken = null

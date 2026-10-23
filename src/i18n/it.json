@@ -1,4 +1,26 @@
 {
+  "fileApproval": {
+    "title": "Important file change approval",
+    "important": "Important file",
+    "mark": "Mark important",
+    "importantHint": "Protected: AI changes and deletion require human approval. Click to remove the important mark.",
+    "markHint": "Require human approval before AI changes or deletes this file.",
+    "hint": "AI changes are saved as proposals. Originals remain unchanged until approval. Open a file below to inspect its diff, then approve or reject.",
+    "empty": "No file change proposals. Mark a Markdown file as important using its top-right toolbar.",
+    "loading": "Loading proposals…",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "history": "Review history",
+    "refresh": "Refresh",
+    "modify": "Modify",
+    "delete": "Delete file",
+    "diffHint": "Red strikethrough indicates removal; green indicates additions.",
+    "approve": "Approve and apply",
+    "reject": "Reject change",
+    "conflict": "The original file changed. Reject this stale proposal and generate a new one to preserve subsequent edits.",
+    "queued": "This file is important. The change is pending under Review → Important file change approval. The original remains unchanged until approval."
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "Costruisci e mantieni la tua knowledge base personale con gli LLM"
@@ -42,7 +64,7 @@
     "recentProjects": "Progetti recenti"
   },
   "sidebar": {
-    "businessModules": "Moduli aziendali",
+    "businessModules": "Business",
     "moduleLoading": "Caricamento dei moduli…",
     "moduleSetup": "Aggiungi a schema.md una sezione Business Modules con un dizionario JSON dei moduli.",
     "moduleEmpty": "Nessuna pagina in questo modulo.",
@@ -460,7 +482,28 @@
     "affectedPages": "Pagine",
     "allClear": "Tutto a posto — niente da revisionare",
     "resolvedDivider": "— Risolti —",
-    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}"
+    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}",
+    "startConversation": "Avvia conversazione",
+    "continueConversation": "Continua conversazione",
+    "conversationTab": "Conversazione di revisione",
+    "panelTabs": "Pannello laterale",
+    "closePanel": "Chiudi pannello laterale",
+    "confirmResolved": "Conferma risoluzione",
+    "resolvedStatus": "Risolto",
+    "pendingStatus": "Da revisionare",
+    "removedStatus": "Revisione rimossa",
+    "resolvedFromConversation": "Risoluzione confermata nella conversazione ({{id}})",
+    "conversationHint": "Verifica prima le fonti. Le modifiche alla Wiki richiedono una tua istruzione esplicita. Confermi tu la risoluzione.",
+    "conversationEmpty": "Inserisci una domanda, aggiungi fonti o indica come gestire questa revisione.",
+    "types": {
+      "contradiction": "Contraddizione",
+      "duplicate": "Duplicato",
+      "missing-page": "Pagina mancante",
+      "confirm": "Conferma",
+      "suggestion": "Suggerimento",
+      "structure": "Struttura",
+      "coverage": "Contenuti mancanti"
+    }
   },
   "settings": {
     "title": "Impostazioni",
@@ -774,6 +817,8 @@
         "autoIngest": "Elabora automaticamente i file sorgente consentiti",
         "autoIngestDescription": "Se disattivo, le modifiche esterne aggiornano comunque l'albero dei file ma non creano attività di elaborazione.",
         "persistExtractedMarkdown": "Conserva il Markdown estratto",
+        "generateSourceSummary": "Genera riepiloghi delle fonti (facoltativo)",
+        "generateSourceSummaryDescription": "Disattivato per impostazione predefinita. Le pagine conservano riferimenti e immagini delle fonti. I riepiloghi esistenti vengono mantenuti.",
         "persistExtractedMarkdownDescription": "Salva il testo estratto dai documenti sotto raw/parsed con la stessa struttura di cartelle di raw/sources.",
         "parsingConcurrency": "Parser di documenti in parallelo",
         "parsingConcurrencyDescription": "Analizza fino a questo numero di documenti importati alla volta. Per sicurezza l'analisi dei PDF resta serializzata internamente.",
@@ -1077,6 +1122,8 @@
     "selectedCount": "{{count}} selezionate",
     "restartSelected": "Riavvia",
     "cancelSelected": "Annulla",
+    "removeSelectedStopped": "Elimina record interrotti",
+    "removeStoppedTask": "Elimina questo record dalla coda (conserva file sorgente e pagine wiki)",
     "selectTask": "Seleziona {{name}}",
     "moveUp": "Sposta prima",
     "moveDown": "Sposta dopo",

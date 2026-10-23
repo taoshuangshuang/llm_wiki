@@ -91,6 +91,8 @@ export interface MergePageOptions {
    * retaining union fields, locked metadata, and a recovery backup.
    */
   replaceExistingBody?: boolean
+  /** 跨目录复用时禁止以新正文回退覆盖旧页；合并失败交由调用方处理。 */
+  requireSuccessfulMerge?: boolean
 }
 
 export async function mergePageContent(
@@ -134,7 +136,14 @@ export async function mergePageContent(
     ))
   }
   if (oldParsed.body.trim() === arrayMergedParsed.body.trim()) {
-    return normalizeMalformedWikilinks(arrayMerged)
+    let identicalBody = arrayMerged
+    for (const field of LOCKED_FIELDS) {
+      const existingValue = oldParsed.frontmatter?.[field]
+      if (typeof existingValue === "string" && existingValue !== "") {
+        identicalBody = setFrontmatterScalar(identicalBody, field, existingValue)
+      }
+    }
+    return normalizeMalformedWikilinks(identicalBody)
   }
 
   // Step 2 — ask the merger to produce a unified body. Failures fall
@@ -148,6 +157,7 @@ export async function mergePageContent(
       opts.signal,
     )
   } catch (err) {
+    if (opts.requireSuccessfulMerge) throw err
     console.warn(
       `[page-merge] LLM merge failed for ${opts.pagePath}, falling back to incoming + array-field union: ${err instanceof Error ? err.message : err}`,
     )
@@ -159,6 +169,7 @@ export async function mergePageContent(
   // page. No-frontmatter output would silently corrupt the page.
   const llmParsed = parseFrontmatter(llmOutput)
   if (llmParsed.frontmatter === null) {
+    if (opts.requireSuccessfulMerge) throw new Error("同名页面合并结果缺少有效 frontmatter，保留旧页")
     console.warn(
       `[page-merge] LLM output for ${opts.pagePath} has no frontmatter — rejecting, falling back`,
     )
@@ -172,6 +183,7 @@ export async function mergePageContent(
   const llmBodyLen = llmParsed.body.length
   const minThreshold = Math.max(oldBodyLen, newBodyLen) * BODY_SHRINK_THRESHOLD
   if (llmBodyLen < minThreshold) {
+    if (opts.requireSuccessfulMerge) throw new Error("同名页面合并结果正文缩减过多，保留旧页")
     console.warn(
       `[page-merge] LLM merge for ${opts.pagePath} produced body ${llmBodyLen} chars, below threshold ${minThreshold.toFixed(0)} (max input was ${Math.max(oldBodyLen, newBodyLen)}) — rejecting, falling back`,
     )

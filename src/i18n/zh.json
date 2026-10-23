@@ -1,4 +1,26 @@
 {
+  "fileApproval": {
+    "title": "重要档案修改审核",
+    "important": "重要档案",
+    "mark": "标记重要",
+    "importantHint": "已保护：模型修改或删除需要人工审核。点击取消重要标记。",
+    "markHint": "标记后，模型修改或删除必须经过人工审核。",
+    "hint": "模型提出的修改先保留为草稿；原文在批准前保持不变。点击档案查看差异后批准或拒绝。",
+    "empty": "暂无档案修改请求。可在 Markdown 档案右上角标记重要。",
+    "loading": "正在加载审核请求…",
+    "pending": "待审核",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+    "history": "审核记录",
+    "refresh": "刷新",
+    "modify": "修改",
+    "delete": "删除档案",
+    "diffHint": "红色删除线表示删除，绿色表示新增。",
+    "approve": "批准并应用",
+    "reject": "拒绝修改",
+    "conflict": "原文已变化，无法应用这份旧草稿。请拒绝后重新生成，避免覆盖后续编辑。",
+    "queued": "该档案已标记重要。修改已提交到“审核 → 重要档案修改审核”，批准前原文保持不变。"
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "用 LLM 构建和维护你的个人知识库"
@@ -42,7 +64,7 @@
     "recentProjects": "最近项目"
   },
   "sidebar": {
-    "businessModules": "业务模块",
+    "businessModules": "业务",
     "moduleLoading": "正在读取业务模块…",
     "moduleSetup": "请在 schema.md 的 Business Modules 章节配置 JSON 模块字典。",
     "moduleEmpty": "此模块暂无页面。",
@@ -447,7 +469,7 @@
     "issues_plural": "{{count}} 个问题"
   },
   "review": {
-    "title": "待审阅",
+    "title": "待审阅项",
     "clearResolved": "清除已解决",
     "refresh": "刷新",
     "refreshHint": "从磁盘重新加载审阅项",
@@ -460,7 +482,37 @@
     "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —",
-    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}"
+    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}",
+    "startConversation": "发起会话",
+    "continueConversation": "继续会话",
+    "conversationTab": "审阅会话",
+    "panelTabs": "右侧面板",
+    "closePanel": "关闭右侧面板",
+    "confirmResolved": "确认已解决",
+    "resolvedStatus": "已解决",
+    "pendingStatus": "待审阅",
+    "removedStatus": "条目已移除",
+    "resolvedFromConversation": "通过审阅会话确认已解决（会话：{{id}}）",
+    "conversationHint": "先核对证据；明确要求修改后才更新 Wiki。由你确认条目已解决。",
+    "conversationEmpty": "输入想核查的问题，或补充证据和处理意见。",
+    "starters": {
+      "title": "请确认这条问题中的具体结论",
+      "hint": "也可以直接在下方补充其他结论、适用条件或证据。",
+      "loading": "正在判断是否有适合选择的确认项…",
+      "failed": "暂时无法生成可选结论，请重试或直接在下方输入。",
+      "uncertain": "暂不确定，请先核查证据",
+      "submit": "确认选择并继续",
+      "message": "以下是我对本条审阅问题的选择。请据此核查证据并给出具体处理建议；暂不修改页面，也不要自动关闭审阅条目。"
+    },
+    "types": {
+      "contradiction": "冲突",
+      "duplicate": "重复",
+      "missing-page": "缺页",
+      "confirm": "待确认",
+      "suggestion": "建议",
+      "structure": "结构规范",
+      "coverage": "内容遗漏"
+    }
   },
   "settings": {
     "title": "设置",
@@ -774,6 +826,8 @@
         "autoIngest": "自动提取允许的原始资料文件",
         "autoIngestDescription": "关闭后，外部变化仍会刷新文件树，但不会创建提取任务。",
         "persistExtractedMarkdown": "保留解析后的 Markdown",
+        "generateSourceSummary": "生成来源摘要（可选）",
+        "generateSourceSummaryDescription": "默认关闭。知识页通过 sources 追溯原文，配图附到知识页；开启后额外生成导读页。已有摘要保持原样。",
         "persistExtractedMarkdownDescription": "将文档解析出的文本按 raw/sources 的目录结构保存到 raw/parsed。",
         "parsingConcurrency": "文档解析并发数",
         "parsingConcurrencyDescription": "最多同时解析这些数量的导入文档。为保证安全，PDF 解析器内部仍会串行执行。",
@@ -1077,6 +1131,8 @@
     "selectedCount": "已选择 {{count}} 项",
     "restartSelected": "重新启动",
     "cancelSelected": "取消",
+    "removeSelectedStopped": "删除已停止记录",
+    "removeStoppedTask": "删除此队列记录（保留来源文件和知识页面）",
     "selectTask": "选择 {{name}}",
     "moveUp": "提前",
     "moveDown": "延后",

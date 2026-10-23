@@ -5,15 +5,74 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 常用 Markdown 排版放在组件层，保留阅读页和聊天区已有的局部样式。 */
+@layer components {
+  .prose { min-width: 0; line-height: 1.7; overflow-wrap: anywhere; }
+  .markdown-document { font-size: 0.875rem; }
+  .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+    margin: 1.4em 0 0.6em;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .prose h1 { font-size: 2em; }
+  .prose h2 { font-size: 1.5em; }
+  .prose h3 { font-size: 1.25em; }
+  .prose h4 { font-size: 1.125em; }
+  .prose h5 { font-size: 1em; }
+  .prose h6 { font-size: 0.9em; color: var(--muted-foreground); }
+  .prose p { margin: 0.75em 0; }
+  .prose a { color: var(--primary); text-decoration: underline; text-underline-offset: 0.2em; }
+  .prose code { font-size: 0.9em; }
+  .prose :not(pre) > code {
+    border-radius: 0.25rem;
+    background: var(--muted);
+    padding: 0.15em 0.35em;
+  }
+  .prose pre {
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 1em 0;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--muted);
+    padding: 0.85em 1em;
+    font-size: 0.875em;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-wrap: normal;
+  }
+  .prose pre code { font-size: inherit; }
+  .prose hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--border); }
+  .prose > :first-child { margin-top: 0; }
+  .prose > :last-child { margin-bottom: 0; }
+}
+
+/* Markdown 阅读区共用的结构样式。Tailwind 默认重置列表标记，项目未启用
+   Typography 插件，因此需显式恢复列表和引用，避免内容结构显示为普通段落。 */
+.prose ul, .prose ol { margin: 0.75em 0; padding-inline-start: 1.75em; }
+.prose ul { list-style-type: disc; }
+.prose ol { list-style-type: decimal; }
+.prose ul ul { list-style-type: circle; }
+.prose ul ul ul { list-style-type: square; }
+.prose li { margin: 0.3em 0; }
+.prose li > ul, .prose li > ol { margin-block: 0.3em; }
+.prose li > p { margin-block: 0.4em; }
+.prose li.task-list-item { list-style-type: none; }
+.prose .task-list-item > input[type="checkbox"] { margin-inline-end: 0.5em; }
+.prose blockquote { margin: 1em 0; border-inline-start: 3px solid var(--primary); padding: 0.5em 1em; background: var(--muted); color: var(--muted-foreground); }
+.prose blockquote > :first-child { margin-top: 0; }
+.prose blockquote > :last-child { margin-bottom: 0; }
+
 /* Chat answers need stronger document hierarchy than compact tool output. Keep
    this scoped so wiki pages and generated artifact previews retain their own
    typography. */
-.chat-markdown { font-size: 0.925rem; line-height: 1.7; }
+.chat-markdown { font-size: 0.8125rem; line-height: 1.65; overflow-wrap: anywhere; }
 .chat-markdown > :first-child { margin-top: 0; }
 .chat-markdown > :last-child { margin-bottom: 0; }
-.chat-markdown h1 { margin: 1.4em 0 0.55em; font-size: 1.45rem; line-height: 1.25; font-weight: 700; }
-.chat-markdown h2 { margin: 1.3em 0 0.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); font-size: 1.2rem; line-height: 1.3; font-weight: 650; }
-.chat-markdown h3 { margin: 1.15em 0 0.4em; font-size: 1.05rem; line-height: 1.35; font-weight: 650; }
+.chat-markdown h1 { margin: 1.4em 0 0.55em; font-size: 1.35em; line-height: 1.3; font-weight: 700; }
+.chat-markdown h2 { margin: 1.3em 0 0.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); font-size: 1.2em; line-height: 1.35; font-weight: 650; }
+.chat-markdown h3 { margin: 1.15em 0 0.4em; font-size: 1.08em; line-height: 1.4; font-weight: 650; }
+.chat-markdown h4 { font-size: 1.04em; }
 .chat-markdown p { margin: 0.65em 0; }
 .chat-markdown ul, .chat-markdown ol { margin: 0.65em 0; padding-inline-start: 1.5rem; }
 .chat-markdown li { margin: 0.3em 0; }
@@ -67,6 +126,8 @@
 }
 
 :root {
+    /* 原生滚动条也需声明配色，页面背景色不会改变 WebView 的控件主题。 */
+    color-scheme: light;
     --window-titlebar-height: 0px;
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
@@ -103,6 +164,7 @@
 }
 
 .dark {
+    color-scheme: dark;
     --background: oklch(0.16 0.005 260);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0.005 260);
@@ -139,6 +201,26 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    /* 统一列表、会话与审阅区的滚动条，避免系统亮色轨道割裂深色界面。 */
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 38%, var(--background)) var(--background);
+    }
+  /* 兼容尚未支持标准滚动条属性的 WebKit。 */
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+    }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    /* 显式绘制轨道，避免旧版 WebKit 的透明轨道露出原生白色底板。 */
+    background: var(--background);
+    }
+  *::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--muted-foreground) 38%, transparent);
+    }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 65%, transparent);
     }
   html,
   body,

@@ -3,7 +3,7 @@ import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
   RotateCcw, X, Clock, TrendingUp, Target, Pause, Play,
-  ArrowUp, ArrowDown,
+  ArrowUp, ArrowDown, Trash2,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
@@ -20,6 +20,7 @@ import {
   cancelTask,
   cancelTasks,
   cancelAllTasks,
+  removeStoppedTasks,
   movePendingTask,
   pauseProcessing,
   resumeProcessing,
@@ -117,6 +118,9 @@ export function ActivityPanel() {
   const fileSyncPending = fileSyncTasks.filter((t) => t.status === "pending").length
   const fileSyncProcessing = fileSyncTasks.filter((t) => t.status === "processing").length
   const fileSyncFailed = fileSyncTasks.filter((t) => t.status === "failed").length
+  const hasSelectedStoppedTasks = queueTasks.some((task) =>
+    selectedTaskIds.has(task.id) && (task.status === "failed" || task.status === "cancelled"),
+  )
 
   // All hooks must be before any conditional return.
   // retryTask / cancelTask / cancelAllTasks all operate on the currently
@@ -157,6 +161,18 @@ export function ActivityPanel() {
   const handleMoveTask = useCallback((taskId: string, direction: "up" | "down") => {
     void movePendingTask(taskId, direction).then(() => setQueueTasks([...getQueue()]))
   }, [])
+
+  // 单条和批量删除共用状态限制，混合选择时保留仍在排队/处理的任务。
+  const handleRemoveStoppedTasks = useCallback((taskIds: string[]) => {
+    if (!project) return
+    void removeStoppedTasks(taskIds).then(() => {
+      const remaining = [...getQueue()]
+      setQueueTasks(remaining)
+      setSelectedTaskIds((current) => new Set(
+        remaining.filter((task) => current.has(task.id)).map((task) => task.id),
+      ))
+    })
+  }, [project])
 
   const toggleTaskSelection = useCallback((taskId: string) => {
     setSelectedTaskIds((current) => {
@@ -346,6 +362,14 @@ export function ActivityPanel() {
                   >
                     {t("activity.cancelSelected")}
                   </button>
+                  {hasSelectedStoppedTasks && (
+                    <button
+                      onClick={() => handleRemoveStoppedTasks([...selectedTaskIds])}
+                      className="rounded px-1.5 py-0.5 text-destructive hover:bg-destructive/10"
+                    >
+                      {t("activity.removeSelectedStopped")}
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -435,7 +459,16 @@ export function ActivityPanel() {
 
           {/* Queue tasks */}
           {visibleQueueTasks.map((task) => (
-            <QueueRow key={task.id} task={task} selected={selectedTaskIds.has(task.id)} onSelect={toggleTaskSelection} onRetry={handleIngestRetry} onCancel={handleIngestCancel} onMove={handleMoveTask} />
+            <QueueRow
+              key={task.id}
+              task={task}
+              selected={selectedTaskIds.has(task.id)}
+              onSelect={toggleTaskSelection}
+              onRetry={handleIngestRetry}
+              onCancel={handleIngestCancel}
+              onMove={handleMoveTask}
+              onRemove={(id) => handleRemoveStoppedTasks([id])}
+            />
           ))}
           {orderedQueueTasks.length > visibleQueueTasks.length && (
             <div className="border-b border-border/50 px-3 py-2 text-center text-[10px] text-muted-foreground">
@@ -471,13 +504,14 @@ export function ActivityPanel() {
   )
 }
 
-function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
+function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove, onRemove }: {
   task: IngestTask
   selected: boolean
   onSelect: (id: string) => void
   onRetry: (id: string) => void
   onCancel: (id: string) => void
   onMove: (id: string, direction: "up" | "down") => void
+  onRemove: (id: string) => void
 }) {
   const { t } = useTranslation()
   const fileName = getFileName(task.sourcePath)
@@ -509,13 +543,23 @@ function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {(task.status === "failed" || task.status === "cancelled") && (
-            <button
-              onClick={() => onRetry(task.id)}
-              className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              title={t("common.retry")}
-            >
-              <RotateCcw className="h-3 w-3" />
-            </button>
+            <>
+              <button
+                onClick={() => onRetry(task.id)}
+                className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                title={t("common.retry")}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => onRemove(task.id)}
+                className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+                title={t("activity.removeStoppedTask")}
+                aria-label={t("activity.removeStoppedTask")}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </>
           )}
           {task.status === "pending" && (
             <>

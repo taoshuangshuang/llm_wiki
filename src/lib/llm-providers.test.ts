@@ -573,6 +573,30 @@ describe("Ollama / custom (chat_completions) — vision content", () => {
 })
 
 describe("reasoning controls", () => {
+  it.each(["off", "low"] as const)("GLM-5.3 入库 %s 明确使用 low，避免静默使用默认深度思考", (mode) => {
+    const config = mkConfig({ provider: "custom", model: "GLM-5.3", customEndpoint: "https://open.bigmodel.cn/api/paas/v4" })
+    const body = getProviderConfig(config).buildBody([{ role: "user", content: "提取来源事实" }], {
+      reasoning: { mode }, max_tokens: 32_768,
+    }) as Record<string, unknown>
+    expect(body.thinking).toEqual({ type: "enabled" })
+    expect(body.reasoning_effort).toBe("low")
+    expect(body.max_tokens).toBe(32_768)
+  })
+
+  it.each(["high", "max", "auto"] as const)("GLM-5.3 保留显式 %s 设置，不因提速而降低思考档位", (mode) => {
+    const body = getProviderConfig(mkConfig({
+      provider: "custom", model: "glm-5.3", customEndpoint: "https://open.bigmodel.cn/api/paas/v4",
+    })).buildBody([{ role: "user", content: "分析来源" }], { reasoning: { mode } }) as Record<string, unknown>
+    expect(body.reasoning_effort).toBe(mode === "auto" ? undefined : mode)
+  })
+
+  it.each(["https://gateway.example/v1", "https://open.bigmodel.cn.example/v1"])("未知接口不套用 GLM 私有参数：%s", (endpoint) => {
+    const body = getProviderConfig(mkConfig({ provider: "custom", model: "glm-5.3", customEndpoint: endpoint }))
+      .buildBody([{ role: "user", content: "hi" }], { reasoning: { mode: "off" } }) as Record<string, unknown>
+    expect(body.thinking).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
   it("does not send thinking to legacy DeepSeek chat models that reject the field", () => {
     const cfg = mkConfig({
       provider: "custom",

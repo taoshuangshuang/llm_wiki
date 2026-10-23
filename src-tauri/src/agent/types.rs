@@ -120,6 +120,9 @@ pub struct AgentChatRequest {
     // filesystem read channel.
     #[serde(default)]
     pub context_files: Vec<String>,
+    /// 审阅材料独立于用户请求，避免问题描述影响工具路由或被当作写入授权。
+    #[serde(default)]
+    pub review_context: Option<AgentReviewContext>,
     #[serde(default)]
     pub skill_mode: AgentSkillMode,
     // Security boundary: these commands must come from an explicit trusted
@@ -159,6 +162,7 @@ impl Default for AgentChatRequest {
             history_explicit: false,
             skills: Vec::new(),
             context_files: Vec::new(),
+            review_context: None,
             skill_mode: AgentSkillMode::default(),
             approved_shell_commands: Vec::new(),
             shell_command: None,
@@ -168,6 +172,21 @@ impl Default for AgentChatRequest {
             persist_session: true,
         }
     }
+}
+
+/// 前端持久化的审阅快照；所有字段都按待核查材料处理。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReviewContext {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub review_type: String,
+    pub title: String,
+    pub description: String,
+    #[serde(default)]
+    pub affected_pages: Vec<String>,
+    #[serde(default)]
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -317,6 +336,24 @@ mod tests {
         assert!(!req.tools.anytxt);
         assert!(!req.allow_empty_retrieval);
         assert!(req.persist_session);
+    }
+
+    #[test]
+    fn chat_request_accepts_review_context_without_changing_user_message() {
+        let request: AgentChatRequest = serde_json::from_value(serde_json::json!({
+            "message": "先核查，不修改",
+            "reviewContext": {
+                "id": "review-one", "type": "missing-page", "title": "创建页面建议",
+                "description": "需要核对来源", "affectedPages": ["wiki/page.md"]
+            }
+        }))
+        .unwrap();
+        assert_eq!(request.message, "先核查，不修改");
+        let context = request.review_context.unwrap();
+        assert_eq!(context.review_type, "missing-page");
+        assert_eq!(context.affected_pages, vec!["wiki/page.md"]);
+        assert!(context.source_path.is_none());
+        assert!(AgentChatRequest::default().review_context.is_none());
     }
 
     #[test]

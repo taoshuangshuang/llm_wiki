@@ -78,10 +78,35 @@ impl LlmConfig {
     }
 }
 
+/// 保留工具协议诊断所需的响应信息，不携带请求头或凭据。
+#[derive(Debug, Clone)]
+pub struct AgentLlmResponse {
+    pub text: String,
+    pub finish_reason: Option<String>,
+    pub output_tokens: Option<u64>,
+}
+
+impl AgentLlmResponse {
+    fn from_payload(text: String, response: &Value) -> Self {
+        Self {
+            text,
+            finish_reason: response.pointer("/choices/0/finish_reason")
+                .or_else(|| response.get("stop_reason"))
+                .or_else(|| response.pointer("/candidates/0/finishReason"))
+                .and_then(Value::as_str).map(str::to_string),
+            output_tokens: response.pointer("/usage/completion_tokens")
+                .or_else(|| response.pointer("/usage/output_tokens"))
+                .or_else(|| response.pointer("/usageMetadata/candidatesTokenCount"))
+                .and_then(Value::as_u64),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmClient {
     config: LlmConfig,
     client: reqwest::Client,
+    structured_output: bool,
 }
 
 pub trait AgentLlmProvider: Send + Sync {
@@ -142,7 +167,7 @@ impl LlmClient {
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .map_err(|err| format!("Failed to build LLM HTTP client: {err}"))?;
-        Ok(Self { config, client })
+        Ok(Self { config, client, structured_output: false })
     }
 
     pub async fn generate_text(
@@ -151,6 +176,16 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
     ) -> Result<String, String> {
+        self.generate_response(system, user, images).await.map(|response| response.text)
+    }
+
+    /// 非流式 Agent 调用保留原始正文及供应商结束信息，供失败诊断使用。
+    pub async fn generate_response(
+        &self,
+        system: &str,
+        user: &str,
+        images: &[AgentImage],
+    ) -> Result<AgentLlmResponse, String> {
         match self.config.provider.as_str() {
             "openai" => {
                 self.generate_openai_like(
@@ -315,6 +350,11 @@ impl LlmClient {
         }
         adapt_openai_strict_completion_body(&mut body, &self.config);
         apply_openai_reasoning(&mut body, &self.config);
+        // 只在已确认支持 JSON 模式的 DeepSeek 官方结构化请求中启用，
+        // 普通聊天及未知兼容网关继续使用原协议。
+        if self.json_output_enabled() {
+            body["response_format"] = json!({ "type": "json_object" });
+        }
         body
     }
 
@@ -325,7 +365,7 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
         include_model: bool,
-    ) -> Result<String, String> {
+    ) -> Result<AgentLlmResponse, String> {
         let body = self.openai_like_body(system, user, images, include_model, false);
 
         let response = self
@@ -346,6 +386,7 @@ impl LlmClient {
         }
         let parsed: Value =
             serde_json::from_str(&text).map_err(|err| format!("Invalid LLM JSON: {err}"))?;
+        self.ensure_complete_response(&parsed)?;
         let content = parsed
             .get("choices")
             .and_then(Value::as_array)
@@ -359,7 +400,7 @@ impl LlmClient {
         if content.is_empty() {
             return Err("LLM response did not contain assistant content".to_string());
         }
-        Ok(content)
+        Ok(AgentLlmResponse::from_payload(content, &parsed))
     }
 
     async fn stream_openai_like<F>(
@@ -412,7 +453,7 @@ impl LlmClient {
         system: &str,
         user: &str,
         images: &[AgentImage],
-    ) -> Result<String, String> {
+    ) -> Result<AgentLlmResponse, String> {
         let body = self.anthropic_like_body(system, user, images, false);
 
         let response = self
@@ -433,6 +474,7 @@ impl LlmClient {
         }
         let parsed: Value =
             serde_json::from_str(&text).map_err(|err| format!("Invalid LLM JSON: {err}"))?;
+        self.ensure_complete_response(&parsed)?;
         let content = parsed
             .get("content")
             .and_then(Value::as_array)
@@ -455,7 +497,7 @@ impl LlmClient {
         if content.is_empty() {
             return Err("LLM response did not contain assistant content".to_string());
         }
-        Ok(content)
+        Ok(AgentLlmResponse::from_payload(content, &parsed))
     }
 
     async fn stream_anthropic_like<F>(
@@ -512,7 +554,7 @@ impl LlmClient {
         system: &str,
         user: &str,
         images: &[AgentImage],
-    ) -> Result<String, String> {
+    ) -> Result<AgentLlmResponse, String> {
         let encoded_model = url_encode_path_segment(&self.config.model);
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{encoded_model}:generateContent"
@@ -537,6 +579,7 @@ impl LlmClient {
         }
         let parsed: Value =
             serde_json::from_str(&text).map_err(|err| format!("Invalid LLM JSON: {err}"))?;
+        self.ensure_complete_response(&parsed)?;
         let content = parsed
             .get("candidates")
             .and_then(Value::as_array)
@@ -557,7 +600,7 @@ impl LlmClient {
         if content.is_empty() {
             return Err("LLM response did not contain assistant content".to_string());
         }
-        Ok(content)
+        Ok(AgentLlmResponse::from_payload(content, &parsed))
     }
 
     async fn stream_google<F>(
@@ -586,6 +629,10 @@ impl LlmClient {
         collect_sse_text(response, parse_google_delta, on_delta).await
     }
 
+    pub fn json_output_enabled(&self) -> bool {
+        self.structured_output && self.config.provider == "custom" && is_deepseek_endpoint(&self.config)
+    }
+
     pub fn structured_task_config(&self, max_tokens: u32) -> Self {
         let mut config = self.config.clone();
         // Agent protocol calls need compact machine-readable output. Let
@@ -595,18 +642,37 @@ impl LlmClient {
             mode: Some("off".to_string()),
             budget_tokens: None,
         });
-        config.max_tokens = Some(max_tokens);
+        // 结构化任务预算作为最低值，不覆盖调用方显式指定的更高输出预算。
+        config.max_tokens = Some(config.max_tokens.unwrap_or(0).max(max_tokens));
         Self {
             config,
             client: self.client.clone(),
+            structured_output: true,
         }
+    }
+
+    /// 在文本进入工具协议解析前识别供应商明确标记的截断，避免接受部分写入内容。
+    fn ensure_complete_response(&self, response: &Value) -> Result<(), String> {
+        let reason = response.pointer("/choices/0/finish_reason")
+            .or_else(|| response.get("stop_reason"))
+            .or_else(|| response.pointer("/candidates/0/finishReason"))
+            .and_then(Value::as_str).unwrap_or_default();
+        if ["length", "max_tokens", "max_output_tokens"].iter()
+            .any(|value| reason.eq_ignore_ascii_case(value))
+        {
+            return Err(format!(
+                "模型输出被截断：finish_reason={reason}, max_tokens={}。未将这次部分输出交给工具执行；请缩短单次输出或按文件分步处理。",
+                self.max_output_tokens()
+            ));
+        }
+        Ok(())
     }
 
     fn max_output_tokens(&self) -> u32 {
         self.config
             .max_tokens
             .unwrap_or(DEFAULT_MAX_TOKENS)
-            .clamp(256, 32_768)
+            .max(256)
     }
 }
 
@@ -956,8 +1022,9 @@ fn requires_bearer_auth(url: &str) -> bool {
 }
 
 fn is_deepseek_endpoint(config: &LlmConfig) -> bool {
-    let endpoint = config.custom_endpoint.to_ascii_lowercase();
-    endpoint.contains("api.deepseek.com") || endpoint.contains("api.deepseek.cn")
+    reqwest::Url::parse(&config.custom_endpoint).ok().is_some_and(|url| {
+        matches!(url.host_str(), Some("api.deepseek.com" | "api.deepseek.cn"))
+    })
 }
 
 fn supports_deepseek_thinking_param(config: &LlmConfig) -> bool {
@@ -1389,6 +1456,19 @@ mod tests {
         );
     }
 
+    /// 验证最终请求体：默认提高到 32K，同时保留调用方显式指定的更高预算。
+    #[test]
+    fn structured_task_output_budget_preserves_higher_explicit_configuration() {
+        for (configured, expected) in [(None, 32_768), (Some(4_096), 32_768), (Some(65_536), 65_536)] {
+            let mut cfg = config("openai");
+            cfg.max_tokens = configured;
+            let client = LlmClient::new(cfg).unwrap().structured_task_config(32_768);
+            let body = client.openai_like_body("system", "user", &[], true, false);
+
+            assert_eq!(body["max_tokens"], expected);
+        }
+    }
+
     #[test]
     fn deepseek_v4_structured_tasks_disable_thinking() {
         let mut cfg = config("custom");
@@ -1402,6 +1482,47 @@ mod tests {
             body.pointer("/thinking/type").and_then(Value::as_str),
             Some("disabled")
         );
+        assert_eq!(body["response_format"]["type"], "json_object");
+    }
+
+    /// 普通聊天和未知兼容网关不能被强制添加供应商可能不支持的 JSON 参数。
+    #[test]
+    fn json_output_is_limited_to_deepseek_structured_requests() {
+        for (endpoint, structured) in [
+            ("https://api.deepseek.com/v1", false),
+            ("https://example.com/v1", true),
+        ] {
+            let mut cfg = config("custom");
+            cfg.custom_endpoint = endpoint.to_string();
+            let client = LlmClient::new(cfg).unwrap();
+            let client = if structured { client.structured_task_config(32_768) } else { client };
+            let body = client.openai_like_body("system", "user", &[], true, false);
+            assert!(body.get("response_format").is_none());
+        }
+    }
+
+    /// 即使截断结果碰巧是合法 JSON，也不能把供应商标记为 length 的响应交给写入链路。
+    #[tokio::test]
+    async fn truncated_http_completion_is_not_accepted_as_a_complete_action() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1", server.server_addr());
+        let worker = std::thread::spawn(move || {
+            let request = server.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+            let response = json!({"choices": [{
+                "message": {"content": "{\"action\":\"tool\",\"tool\":\"wiki.write_page\"}"},
+                "finish_reason": "length"
+            }]});
+            request.respond(tiny_http::Response::from_string(response.to_string())).unwrap();
+        });
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = endpoint;
+        let result = LlmClient::new(cfg).unwrap().structured_task_config(32_768)
+            .generate_text("Return JSON", "write page", &[]).await;
+        worker.join().unwrap();
+
+        let error = result.expect_err("输出被截断时必须拒绝把部分内容视为完整结果");
+        assert!(error.contains("finish_reason=length"));
+        assert!(error.contains("32768"));
     }
 
     #[test]

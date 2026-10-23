@@ -3,6 +3,7 @@ import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
 import { getProviderConfig, type RequestOverrides } from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
 import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
+import { beginLlmObservation, type LlmObservation } from "./llm-observer"
 
 export type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"
 export { isFetchNetworkError } from "./tauri-fetch"
@@ -208,6 +209,31 @@ export async function streamChat(
   messages: import("./llm-providers").ChatMessage[],
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+): Promise<void> {
+  const observation = beginLlmObservation(config, messages, requestOverrides)
+  if (!observation) return streamChatImpl(config, messages, callbacks, signal, requestOverrides)
+  try {
+    await streamChatImpl(config, messages, {
+      ...callbacks,
+      onToken: (text) => { observation.token(text); callbacks.onToken(text) },
+      onDone: (completion) => { observation.done(completion); callbacks.onDone(completion) },
+      onError: (error) => { observation.error(error); callbacks.onError(error) },
+    }, signal, requestOverrides, observation)
+  } catch (error) {
+    observation.error(error)
+    throw error
+  } finally {
+    await observation.finish(signal?.aborted === true)
+  }
+}
+
+/** 供应商传输保持原有行为；诊断只观测真实请求和回调，不改变输入输出。 */
+async function streamChatImpl(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
   /**
    * Wire-agnostic sampling knobs. The provider's buildBody() translates
    * these into its native schema — OpenAI-style wires accept them at
@@ -217,6 +243,7 @@ export async function streamChat(
    * with "Unknown name 'temperature': Cannot find field." HTTP 400.
    */
   requestOverrides?: RequestOverrides,
+  observation?: LlmObservation,
 ): Promise<void> {
   const { onToken, onDone, onError } = callbacks
 
@@ -277,6 +304,7 @@ export async function streamChat(
   try {
     const body = providerConfig.buildBody(messages, requestOverrides)
     const httpFetch = await getHttpFetch()
+    await observation?.request(providerConfig.url, body)
     response = await httpFetch(providerConfig.url, {
       method: "POST",
       headers: providerConfig.headers,
@@ -314,6 +342,7 @@ export async function streamChat(
     return
   }
 
+  observation?.httpStatus(response.status)
   if (!response.ok) {
     let errorDetail = `HTTP ${response.status}: ${response.statusText}`
     try {
@@ -324,7 +353,7 @@ export async function streamChat(
     }
     if (shouldRetryWithoutTemperature(config, response.status, errorDetail, requestOverrides)) {
       const { temperature: _temperature, ...retryOverrides } = requestOverrides ?? {}
-      return streamChat(config, messages, callbacks, signal, retryOverrides)
+      return streamChatImpl(config, messages, callbacks, signal, retryOverrides, observation)
     }
     if (
       response.status === 404 &&
@@ -347,7 +376,9 @@ export async function streamChat(
 
   if (!providerConfig.streaming) {
     try {
-      const payload: unknown = await response.json()
+      const raw = await response.text()
+      observation?.rawResponse(raw)
+      const payload: unknown = JSON.parse(raw)
       const content = providerConfig.parseResponse(payload)
       const finishReason = responseFinishReason(payload)
       if (!content) {
@@ -418,6 +449,7 @@ export async function streamChat(
     }
   }
   const processRecord = (line: string): Error | null => {
+    observation?.rawResponse(`${line}\n`)
     const trimmed = line.trim()
     if (!trimmed) return null
 

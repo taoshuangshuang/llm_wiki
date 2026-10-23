@@ -8,7 +8,7 @@ export interface ReviewOption {
 
 export interface ReviewItem {
   id: string
-  type: "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion"
+  type: "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion" | "structure" | "coverage"
   title: string
   description: string
   sourcePath?: string
@@ -16,6 +16,8 @@ export interface ReviewItem {
   searchQueries?: string[]
   options: ReviewOption[]
   resolved: boolean
+  /** 用户点 X 忽略的事项保留记录，防止历史报告或再次入库将其恢复。 */
+  dismissed?: boolean
   resolvedAction?: string
   createdAt: number
 }
@@ -83,6 +85,7 @@ function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
     ...a, // a.id is kept; both share it by construction
     resolved,
     resolvedAction,
+    ...((a.dismissed || b.dismissed) ? { dismissed: true } : {}),
     description: a.description || b.description,
     sourcePath: a.sourcePath ?? b.sourcePath,
     affectedPages: unionField(a.affectedPages, b.affectedPages),
@@ -172,11 +175,13 @@ export const useReviewStore = create<ReviewState>((set) => ({
 
   dismissItem: (id) =>
     set((state) => ({
-      items: state.items.filter((item) => item.id !== id),
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, resolved: true, dismissed: true, resolvedAction: "dismiss" } : item
+      ),
     })),
 
   clearResolved: () =>
     set((state) => ({
-      items: state.items.filter((item) => !item.resolved),
+      items: state.items.filter((item) => !item.resolved || item.dismissed),
     })),
 }))

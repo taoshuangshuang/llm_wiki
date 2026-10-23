@@ -19,6 +19,7 @@ import {
   sourceReferenceIdentity,
   sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
+import { isSourceMediaReferenced } from "@/lib/source-media"
 import {
   parseFrontmatterArray,
   parseSources,
@@ -617,7 +618,8 @@ export async function cleanupDeletedWikiPages(
   for (const info of deletedInfos) {
     await removePageEmbedding(pp, wikiPageIdFromPath(pp, info.path))
     const normalizedPath = normalizePath(info.path)
-    if (normalizedPath.includes("/wiki/sources/") || normalizedPath.startsWith("wiki/sources/")) {
+    if ((normalizedPath.includes("/wiki/sources/") || normalizedPath.startsWith("wiki/sources/"))
+      && !await isSourceMediaReferenced(pp, info.slug)) {
       try {
         await deleteFile(`${pp}/wiki/media/${info.slug}`)
       } catch {

@@ -10,7 +10,8 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
 import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile } from "@/commands/fs"
+import { saveHumanFile } from "@/commands/file-approval"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
@@ -1740,7 +1741,7 @@ function GraphPreviewPanel({
   }, [])
 
   const writeNow = useCallback((markdown: string) => {
-    writeFile(preview.path, markdown)
+    saveHumanFile(preview.path, markdown)
       .then(() => {
         lastSavedRef.current = markdown
         onContentChange(markdown)

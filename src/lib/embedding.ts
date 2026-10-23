@@ -29,6 +29,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { clampUserConcurrency } from "@/lib/concurrency-limits"
+import { wikiPageIdError } from "@/lib/wiki-page-id"
 
 // ── Error surfacing ──────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ interface ChunkSearchResult {
   score: number
 }
 
-async function vectorSearchChunks(
+export async function vectorSearchChunks(
   projectPath: string,
   queryEmbedding: number[],
   topK: number,
@@ -620,6 +621,17 @@ export async function embedAllPages(
   const scheduleVectorWrite = createAsyncLimiter(1)
 
   if (options?.clearExisting) {
+    // 在请求模型和清空旧表前校验完整清单，避免一个旧文件名导致索引丢失。
+    const invalidPages = mdFiles.flatMap((file) => {
+      const reason = wikiPageIdError(file.id)
+      return reason ? [`${file.id}: ${reason}`] : []
+    })
+    if (invalidPages.length > 0) {
+      throwEmbeddingReindexError(
+        pp,
+        `页面名称校验失败（${invalidPages.length} 个）：\n${invalidPages.join("\n")}\nExisting index was left unchanged. 旧索引已保留，请修改名称及相关链接后重试。`,
+      )
+    }
     if (mdFiles.length === 0) {
       const existingChunks = await vectorCountChunks(pp).catch(() => 0)
       if (existingChunks > 0) {

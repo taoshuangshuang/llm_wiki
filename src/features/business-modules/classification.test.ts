@@ -32,6 +32,15 @@ describe("最终写入前的模块分类", () => {
     expect(messages[1].content).not.toContain("module/old")
     expect(parseFrontmatter(result.content).frontmatter?.tags).toEqual(["SQL", "module/query"])
   })
+  it("分类遵守入库思考设置，不继承聊天的深度思考", async () => {
+    const classify = await createModuleTagWriter("/p", {
+      ...config, reasoning: { mode: "max" }, ingestReasoning: { mode: "off" },
+    })
+    const result = await classify(content)
+    expect(vi.mocked(streamChat).mock.calls[0][4]?.reasoning).toEqual({ mode: "off" })
+    expect(parseFrontmatter(result.content).body).toBe(parseFrontmatter(content).body)
+    expect(parseFrontmatter(result.content).frontmatter?.tags).toEqual(["SQL", "module/query"])
+  })
   it("未配置模块字典的项目完全保留原内容，不增加模型调用", async () => {
     vi.mocked(readFile).mockResolvedValue("## Page Types\n| concept | wiki/concepts |")
     const classify = await createModuleTagWriter("/p", config)

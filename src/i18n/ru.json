@@ -1,4 +1,26 @@
 {
+  "fileApproval": {
+    "title": "Important file change approval",
+    "important": "Important file",
+    "mark": "Mark important",
+    "importantHint": "Protected: AI changes and deletion require human approval. Click to remove the important mark.",
+    "markHint": "Require human approval before AI changes or deletes this file.",
+    "hint": "AI changes are saved as proposals. Originals remain unchanged until approval. Open a file below to inspect its diff, then approve or reject.",
+    "empty": "No file change proposals. Mark a Markdown file as important using its top-right toolbar.",
+    "loading": "Loading proposals…",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "history": "Review history",
+    "refresh": "Refresh",
+    "modify": "Modify",
+    "delete": "Delete file",
+    "diffHint": "Red strikethrough indicates removal; green indicates additions.",
+    "approve": "Approve and apply",
+    "reject": "Reject change",
+    "conflict": "The original file changed. Reject this stale proposal and generate a new one to preserve subsequent edits.",
+    "queued": "This file is important. The change is pending under Review → Important file change approval. The original remains unchanged until approval."
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "Создавайте и поддерживайте личную базу знаний с помощью LLM"
@@ -42,7 +64,7 @@
     "recentProjects": "Недавние проекты"
   },
   "sidebar": {
-    "businessModules": "Бизнес-модули",
+    "businessModules": "Бизнес",
     "moduleLoading": "Загрузка модулей…",
     "moduleSetup": "Добавьте в schema.md раздел Business Modules со словарём модулей JSON.",
     "moduleEmpty": "В этом модуле пока нет страниц.",
@@ -460,7 +482,28 @@
     "affectedPages": "Страницы",
     "allClear": "Всё в порядке — нечего ревьюировать",
     "resolvedDivider": "— Решённые —",
-    "actionFailed": "Действие не выполнено, элемент остаётся в ожидании. Можно повторить: {{error}}"
+    "actionFailed": "Действие не выполнено, элемент остаётся в ожидании. Можно повторить: {{error}}",
+    "startConversation": "Начать разговор",
+    "continueConversation": "Продолжить разговор",
+    "conversationTab": "Разговор по ревью",
+    "panelTabs": "Правая панель",
+    "closePanel": "Закрыть правую панель",
+    "confirmResolved": "Подтвердить решение",
+    "resolvedStatus": "Решено",
+    "pendingStatus": "Ожидает ревью",
+    "removedStatus": "Элемент удалён",
+    "resolvedFromConversation": "Решение подтверждено в разговоре ({{id}})",
+    "conversationHint": "Сначала проверьте источники. Для изменения Wiki нужно ваше явное указание. Вы подтверждаете решение.",
+    "conversationEmpty": "Введите вопрос, добавьте источники или укажите способ решения.",
+    "types": {
+      "contradiction": "Противоречие",
+      "duplicate": "Дубликат",
+      "missing-page": "Отсутствующая страница",
+      "confirm": "Подтверждение",
+      "suggestion": "Предложение",
+      "structure": "Структура",
+      "coverage": "Пропуски содержания"
+    }
   },
   "settings": {
     "title": "Настройки",
@@ -774,6 +817,8 @@
         "autoIngest": "Автоматически обрабатывать разрешённые файлы источников",
         "autoIngestDescription": "Если выключено, внешние изменения по-прежнему обновляют дерево файлов, но не создают задачи обработки.",
         "persistExtractedMarkdown": "Сохранять извлечённый Markdown",
+        "generateSourceSummary": "Создавать сводки источников (необязательно)",
+        "generateSourceSummaryDescription": "По умолчанию отключено. Страницы сохраняют ссылки на источники и изображения. Существующие сводки сохраняются.",
         "persistExtractedMarkdownDescription": "Сохранять извлечённый текст документов в raw/parsed по той же структуре папок, что и raw/sources.",
         "parsingConcurrency": "Параллельные парсеры документов",
         "parsingConcurrencyDescription": "Обрабатывать одновременно до этого количества импортированных документов. Разбор PDF для безопасности остаётся последовательным.",
@@ -1077,6 +1122,8 @@
     "selectedCount": "Выбрано: {{count}}",
     "restartSelected": "Перезапустить",
     "cancelSelected": "Отменить",
+    "removeSelectedStopped": "Удалить остановленные записи",
+    "removeStoppedTask": "Удалить запись из очереди (сохранить исходные файлы и страницы wiki)",
     "selectTask": "Выбрать {{name}}",
     "moveUp": "Переместить раньше",
     "moveDown": "Переместить позже",

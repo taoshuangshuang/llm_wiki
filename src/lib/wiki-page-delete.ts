@@ -35,6 +35,7 @@ import {
   writeFrontmatterArray,
 } from "@/lib/sources-merge"
 import type { FileNode } from "@/types/wiki"
+import { isSourceMediaReferenced } from "@/lib/source-media"
 
 /**
  * Detect whether a wiki page lives under `wiki/sources/`. We treat
@@ -93,6 +94,8 @@ export async function cascadeDeleteWikiPage(
   if (isSourcePage(pagePath) && slug.length > 0 && !slug.startsWith(".")) {
     const pp = normalizePath(projectPath)
     const mediaDir = `${pp}/wiki/media/${slug}`
+    // 摘要已是可选页；先确认其他知识页不再引用配图，才能回收目录。
+    if (await isSourceMediaReferenced(pp, slug)) return
     try {
       // delete_file in fs.rs auto-detects directories and uses
       // remove_dir_all under the hood — see fs.rs L989. So a single

@@ -166,7 +166,7 @@ function ChatMessageImpl({
         )}
         {(!isUser || message.content) && (
           <div
-            className={`rounded-lg px-3 py-2 text-sm ${
+            className={`rounded-lg px-3 py-2 text-[13px] leading-relaxed ${
               isUser
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-foreground"
@@ -1320,7 +1320,7 @@ export function StreamingMessage({ content, agentEvents = [] }: StreamingMessage
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <Bot className="h-4 w-4" />
       </div>
-      <div className="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-muted text-foreground">
+      <div className="max-w-[80%] rounded-lg px-3 py-2 text-[13px] leading-relaxed bg-muted text-foreground">
         <AgentActivity events={agentEvents} />
         {isThinking ? (
           <StreamingThinkingBlock content={thinking} />

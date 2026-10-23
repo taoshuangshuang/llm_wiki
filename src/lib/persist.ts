@@ -1,5 +1,7 @@
 import { writeFile, readFile, createDirectory, listDirectory } from "@/commands/fs"
-import { normalizeReviewItems, type ReviewItem } from "@/stores/review-store"
+import { normalizeReviewItems, reviewIdFor, type ReviewItem } from "@/stores/review-store"
+import { acceptanceFailureReviews } from "@/lib/ingest-acceptance-reviews"
+import type { AcceptanceReport } from "@/lib/ingest-acceptance"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import type { ChatAgentMode, ChatRetrievalMode } from "@/lib/chat-agent-types"
@@ -19,12 +21,46 @@ export async function saveReviewItems(projectPath: string, items: ReviewItem[]):
 
 export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]> {
   const pp = normalizePath(projectPath)
+  let items: ReviewItem[] = []
   try {
     const content = await readFile(`${pp}/.llm-wiki/review.json`)
-    return normalizeReviewItems(JSON.parse(content) as ReviewItem[])
-  } catch {
-    return []
+    items = normalizeReviewItems(JSON.parse(content) as ReviewItem[])
+  } catch { /* 没有旧审查文件时，仍继续加载历史报告中的待审阅项。 */ }
+  const legacyItems = items.filter((item) => item.type === "confirm" &&
+    item.options.some((option) => option.action === "已人工修正，需重试验收"))
+  const reports = await listDirectory(`${pp}/.llm-wiki/acceptance`).catch(() => [])
+  for (const file of reports) {
+    if (file.is_dir || !file.name.endsWith(".json")) continue
+    try {
+      const report = JSON.parse(await readFile(file.path)) as AcceptanceReport
+      if (typeof report.sourceIdentity !== "string" || report.sourceIdentity.split("/").some((part) => part === ".." || !part)) continue
+      const reviews = acceptanceFailureReviews(`${pp}/raw/sources/${report.sourceIdentity}`, report)
+      for (const item of reviews) {
+        // 旧版统一使用 confirm；按报告恢复分类，同时保留人工处理状态。
+        const legacyTitle = item.title.replace(/^入库审阅：/, "入库验收未通过：")
+        const legacy = legacyItems.find((candidate) => candidate.title === legacyTitle && candidate.sourcePath === item.sourcePath)
+        if (legacy) items = items.filter((candidate) => candidate !== legacy)
+        items.push({
+          ...item, id: reviewIdFor(item), resolved: legacy?.resolved ?? false,
+          ...(legacy?.dismissed ? { dismissed: true } : {}),
+          resolvedAction: legacy?.resolvedAction === "已人工修正，需重试验收" ? "已审阅" : legacy?.resolvedAction,
+          createdAt: legacy?.createdAt ?? report.updatedAt ?? 0,
+        })
+      }
+    } catch { /* 单份报告损坏不影响已有审查记录。 */ }
   }
+  // 报告缺失或已被后续检查覆盖时，仍将旧的人工处理入口改成普通待审阅项。
+  return normalizeReviewItems(items.map((item) => {
+    if (!item.title.startsWith("入库验收未通过：") ||
+      !item.options.some((option) => option.action === "已人工修正，需重试验收")) return item
+    return {
+      ...item,
+      title: item.title.replace(/^入库验收未通过：/, "入库审阅："),
+      description: item.description.replace(/请核对原文并修正页面或规则，[\s\S]*$/, "请核对原文和相关页面，可发起会话处理，完成后确认已审阅。"),
+      options: [{ label: "已审阅", action: "已审阅" }],
+      resolvedAction: item.resolvedAction === "已人工修正，需重试验收" ? "已审阅" : item.resolvedAction,
+    }
+  }))
 }
 
 export async function saveLintItems(projectPath: string, items: LintItem[]): Promise<void> {

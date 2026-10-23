@@ -9,6 +9,7 @@ describe("chat-store conversation isolation", () => {
       messages: [],
       isStreaming: false,
       streamingContent: "",
+      conversationStreams: {},
       mode: "chat",
       ingestSource: null,
       useWebSearch: false,
@@ -27,6 +28,50 @@ describe("chat-store conversation isolation", () => {
     expect(useChatStore.getState().retrievalMode).toBe("smart")
     useChatStore.getState().setRetrievalMode("faithful")
     expect(useChatStore.getState().retrievalMode).toBe("faithful")
+  })
+
+  it("keeps two conversations generating independently when tokens and completion interleave", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.getState().setStreaming(true, first)
+    useChatStore.getState().appendStreamToken("<think>会话一", first)
+
+    // 新建另一个会话不能停止已经运行的任务。
+    const second = useChatStore.getState().createConversation()
+    expect(useChatStore.getState().isStreaming).toBe(true)
+    expect(useChatStore.getState().streamingContent).toBe("")
+    useChatStore.getState().setStreaming(true, second)
+    useChatStore.getState().appendStreamToken("会话二回答", second)
+    useChatStore.getState().appendStreamToken("继续思考", first)
+    expect(useChatStore.getState().streamingContent).toBe("会话二回答")
+
+    useChatStore.getState().setActiveConversation(first)
+    expect(useChatStore.getState().streamingContent).toBe("<think>会话一继续思考")
+    useChatStore.getState().setActiveConversation(second)
+
+    // 后台任务完成不能清空前台任务的缓存或关闭其生成状态。
+    useChatStore.getState().finalizeStreamForConversation(first, "<think>会话一继续思考</think>会话一回答")
+    expect(useChatStore.getState().isStreaming).toBe(true)
+    expect(useChatStore.getState().streamingContent).toBe("会话二回答")
+    useChatStore.getState().finalizeStreamForConversation(second, "会话二回答")
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    expect(useChatStore.getState().getActiveMessages().map((message) => message.content)).toEqual(["会话二回答"])
+  })
+
+  it("deleting a generating conversation does not clear another conversation or resurrect deleted messages", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.getState().setStreaming(true, first)
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().setStreaming(true, second)
+    useChatStore.getState().appendStreamToken("保留第二个会话", second)
+
+    useChatStore.getState().deleteConversation(first)
+    // 已删除请求的延迟输出与完成回调不能重新创建消息，也不能结束另一个流。
+    useChatStore.getState().appendStreamToken("延迟输出", first)
+    useChatStore.getState().finalizeStreamForConversation(first, "延迟完成")
+    expect(useChatStore.getState().conversationStreams[first]).toBeUndefined()
+    expect(useChatStore.getState().isStreaming).toBe(true)
+    expect(useChatStore.getState().streamingContent).toBe("保留第二个会话")
+    expect(useChatStore.getState().messages).toEqual([])
   })
 
   it("writes async assistant results back to the original conversation", () => {
@@ -75,6 +120,47 @@ describe("chat-store conversation isolation", () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it("restores the complete thinking stream after switching away and back", () => {
+    const first = useChatStore.getState().createConversation()
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().setActiveConversation(first)
+    useChatStore.getState().setStreaming(true)
+    useChatStore.getState().appendStreamToken("<think>正在分析第一部分")
+
+    // 切换时不应丢失已经接收的思考内容；后台继续收到的增量也应保留。
+    useChatStore.getState().setActiveConversation(second)
+    useChatStore.getState().setActiveConversation(first)
+    expect(useChatStore.getState().streamingContent).toBe("<think>正在分析第一部分")
+
+    useChatStore.getState().setActiveConversation(second)
+    useChatStore.getState().appendStreamToken("，继续分析第二部分", first)
+    useChatStore.getState().setActiveConversation(first)
+
+    expect(useChatStore.getState().isStreaming).toBe(true)
+    expect(useChatStore.getState().streamingContent).toBe("<think>正在分析第一部分，继续分析第二部分")
+  })
+
+  it("keeps thinking and the final answer in the original conversation when it finishes in the background", () => {
+    const first = useChatStore.getState().createConversation()
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().setActiveConversation(first)
+    useChatStore.getState().setStreaming(true)
+    useChatStore.getState().appendStreamToken("<think>正在分析")
+
+    // 用户停留在另一个会话时完成生成，最终消息仍应写回原会话。
+    useChatStore.getState().setActiveConversation(second)
+    const response = "<think>正在分析，分析完成</think>最终回答"
+    useChatStore.getState().finalizeStreamForConversation(first, response)
+    expect(useChatStore.getState().getActiveMessages()).toEqual([])
+
+    useChatStore.getState().setActiveConversation(first)
+    expect(useChatStore.getState().getActiveMessages()).toEqual([
+      expect.objectContaining({ role: "assistant", content: response }),
+    ])
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    expect(useChatStore.getState().streamingContent).toBe("")
+  })
+
   it("removes the last assistant message only from the active conversation", () => {
     useChatStore.setState({
       conversations: [
@@ -95,7 +181,7 @@ describe("chat-store conversation isolation", () => {
     ])
   })
 
-  it("clears stale stream content when creating or switching conversations", () => {
+  it("clears stale stream content when creating a conversation or switching while idle", () => {
     const first = useChatStore.getState().createConversation()
     useChatStore.setState({
       streamingContent: "old conversation tokens",
@@ -110,7 +196,7 @@ describe("chat-store conversation isolation", () => {
 
     useChatStore.setState({
       streamingContent: "more stale tokens",
-      isStreaming: true,
+      isStreaming: false,
     })
     useChatStore.getState().setActiveConversation(first)
 

@@ -42,6 +42,10 @@ describe("resetProjectState — Zustand stores", () => {
       activeConversationId: "c1",
       isStreaming: true,
       streamingContent: "partial",
+      conversationStreams: {
+        c1: { content: "partial", agentEvents: [] },
+        c2: { content: "another stream", agentEvents: [] },
+      },
       mode: "ingest",
       ingestSource: "/some/file",
     })
@@ -54,6 +58,7 @@ describe("resetProjectState — Zustand stores", () => {
     expect(chat.activeConversationId).toBeNull()
     expect(chat.isStreaming).toBe(false)
     expect(chat.streamingContent).toBe("")
+    expect(chat.conversationStreams).toEqual({})
     expect(chat.mode).toBe("chat")
     expect(chat.ingestSource).toBeNull()
   })

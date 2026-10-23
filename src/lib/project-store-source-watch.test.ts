@@ -33,4 +33,15 @@ describe("source watch all-projects persistence", () => {
     await saveSourceWatchAllProjects(false)
     expect(await loadSourceWatchAllProjects()).toBe(false)
   })
+
+  it("来源摘要默认关闭，显式开启仅影响对应项目并能持久化", async () => {
+    const { loadSourceWatchConfig, saveSourceWatchConfig } = await import("./project-store")
+    const config = await loadSourceWatchConfig("project-a")
+    expect(config.generateSourceSummary).toBe(false)
+    await saveSourceWatchConfig({ ...config, generateSourceSummary: true }, "project-a")
+    expect((await loadSourceWatchConfig("project-a")).generateSourceSummary).toBe(true)
+    expect((await loadSourceWatchConfig("project-b")).generateSourceSummary).toBe(false)
+    await saveSourceWatchConfig({ ...config, generateSourceSummary: false }, "project-a")
+    expect((await loadSourceWatchConfig("project-a")).generateSourceSummary).toBe(false)
+  })
 })

@@ -199,6 +199,18 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
         </label>
 
         <label className="flex items-start gap-3">
+          <input type="checkbox" checked={config.generateSourceSummary === true}
+            onChange={(event) => updateConfig({ generateSourceSummary: event.target.checked })}
+            disabled={!projectReady} className="mt-1 h-4 w-4" />
+          <div className="space-y-1">
+            <span className="text-sm font-semibold">{t("settings.sections.sourceWatch.generateSourceSummary", { defaultValue: "Generate source summaries" })}</span>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t("settings.sections.sourceWatch.generateSourceSummaryDescription", {
+              defaultValue: "Optional document overview pages. Disabled by default; sources on knowledge pages still link to original documents. Existing summaries are kept.",
+            })}</p>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3">
           <input
             type="checkbox"
             checked={config.autoIngest}

@@ -96,7 +96,7 @@ fn validate_page_id_common(page_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_disallowed_page_id_char(c: char) -> bool {
+pub(crate) fn is_disallowed_page_id_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,

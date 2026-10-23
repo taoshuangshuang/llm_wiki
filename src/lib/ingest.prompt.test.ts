@@ -280,6 +280,22 @@ describe("review research query prompt", () => {
 })
 
 describe("long-source ingest planning", () => {
+  it.each([
+    ["目录点线", `查询方案${".".repeat(2100)}45`],
+    ["连续中英文标点", `？！${".!?。！？".repeat(400)}结束`],
+    ["短句后接超长句", `开头。${"甲".repeat(2400)}。结尾。`],
+    ["超长标题", `# ${"查询方案".repeat(600)}`],
+  ])("细分%s时保留全部非空白字符及其顺序", (_scenario, content) => {
+    // 模拟分析截断后的减半细分，校验公开输出契约，不依赖内部切分步骤。
+    const target = Math.floor(content.length / 2)
+    const chunks = splitSourceIntoSemanticChunks(content, target, 80)
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.every((chunk) => chunk.main.length <= target * 1.25)).toBe(true)
+    expect(chunks.map((chunk) => chunk.main).join("").replace(/\s/g, ""))
+      .toBe(content.replace(/\s/g, ""))
+  })
+
   it("scales generation output tokens with the configured context window", () => {
     expect(computeIngestGenerationMaxTokens(64_000)).toBe(8_192)
     expect(computeIngestGenerationMaxTokens(128_000)).toBe(16_384)
@@ -287,8 +303,9 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
     expect(computeIngestAnalysisMaxTokens(64_000)).toBe(4_096)
     expect(computeIngestAnalysisMaxTokens(128_000)).toBe(4_800)
-    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(8_192)
-    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(8_192)
+    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(9_600)
+    expect(computeIngestAnalysisMaxTokens(512_000)).toBe(19_200)
+    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(32_768)
     expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
   })
 
