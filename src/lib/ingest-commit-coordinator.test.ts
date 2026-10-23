@@ -25,7 +25,10 @@ describe("IngestCommitCoordinator", () => {
     await Promise.resolve()
     expect(events).toEqual(["first:start"])
     finishFirst()
-    await Promise.all([firstCommit, secondCommit])
+    await firstCommit
+    first.release()
+    await secondCommit
+    second.release()
     expect(events).toEqual(["first:start", "first:end", "second"])
   })
 
@@ -43,7 +46,7 @@ describe("IngestCommitCoordinator", () => {
     expect(events).toEqual(["next"])
   })
 
-  it("releases a turn when the commit operation rejects", async () => {
+  it("任务在提交失败后释放预约，后继仍可继续", async () => {
     const coordinator = new IngestCommitCoordinator()
     const first = coordinator.reserve()
     const second = coordinator.reserve()
@@ -51,6 +54,23 @@ describe("IngestCommitCoordinator", () => {
     await expect(first.runCommit(async () => {
       throw new Error("write failed")
     })).rejects.toThrow("write failed")
+    first.release()
     await expect(second.runCommit(async () => "ok")).resolves.toBe("ok")
   })
+  it("同一任务多次提交或重新规划时保持预约，任务完成后才让后继提交", async () => {
+    const coordinator = new IngestCommitCoordinator()
+    const first = coordinator.reserve()
+    const second = coordinator.reserve()
+    const events: string[] = []
+    await first.runCommit(async () => { events.push("first:check") })
+    const next = second.runCommit(async () => { events.push("second") })
+    await Promise.resolve()
+    await first.runCommit(async () => { events.push("first:write") })
+    expect(events).toEqual(["first:check", "first:write"])
+    first.release()
+    await next
+    second.release()
+    expect(events).toEqual(["first:check", "first:write", "second"])
+  })
+
 })

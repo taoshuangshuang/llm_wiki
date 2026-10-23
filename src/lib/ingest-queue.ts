@@ -1015,6 +1015,7 @@ async function runTask(
   }
 
   try {
+    let unchanged = false
     const writtenFiles = await autoIngest(
       projectPath,
       fullSourcePath,
@@ -1022,7 +1023,7 @@ async function runTask(
       run.controller.signal,
       task.folderContext,
       trackWrittenFile,
-      { runCommit },
+      { runCommit, onResult: (result) => { unchanged = result.outcome === "unchanged" } },
     )
     if (currentProjectId !== projectId || run.epoch !== queueEpoch) return
     run.writtenFiles = writtenFiles
@@ -1035,7 +1036,7 @@ async function runTask(
       await saveQueue(projectPath)
       return
     }
-    if (writtenFiles.length === 0) throw new Error("Ingest produced no output files")
+    if (writtenFiles.length === 0 && !unchanged) throw new Error("Ingest produced no output files")
 
     cancelledInFlightTaskIds.delete(task.id)
     queue = queue.filter((candidate) => candidate.id !== task.id)

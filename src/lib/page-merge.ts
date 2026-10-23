@@ -224,6 +224,18 @@ export async function mergePageContent(
   )
 }
 
+/** 完整更新稿无需再次合并正文；由程序保留来源、标签、关联及不可变元数据。 */
+export function protectCompletePageMetadata(content: string, existing: string | null, today = defaultToday()): string {
+  if (!existing) return normalizeMalformedWikilinks(content)
+  let result = mergeArrayFieldsIntoContent(content, existing, [...UNION_FIELDS])
+  const { frontmatter } = parseFrontmatter(existing)
+  for (const field of LOCKED_FIELDS) {
+    const value = frontmatter?.[field]
+    if (typeof value === "string" && value) result = setFrontmatterScalar(result, field, value)
+  }
+  return normalizeMalformedWikilinks(setFrontmatterScalar(result, "updated", today))
+}
+
 interface ReservedUrlMatch {
   canonical: string
   raw: string

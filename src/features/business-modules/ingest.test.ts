@@ -31,6 +31,7 @@ beforeEach(async () => {
   useWikiStore.setState({
     project: { id: "test", name: "Test", path: project.path },
     outputLanguage: "English",
+    sourceWatchConfig: { ...useWikiStore.getState().sourceWatchConfig, generateSourceSummary: true },
     multimodalConfig: { ...useWikiStore.getState().multimodalConfig, enabled: false },
     embeddingConfig: { ...useWikiStore.getState().embeddingConfig, enabled: false },
   })
@@ -47,7 +48,7 @@ beforeEach(async () => {
       response = merged
     } else if (system.includes("generate wiki files")) {
       generationCalls++
-      response = `---FILE: wiki/concepts/parser.md---\n${incoming}\n---END FILE---`
+      response = `---FILE: wiki/concepts/parser.md---\n${merged}\n---END FILE---`
     }
     callbacks.onToken(response)
     callbacks.onDone()
@@ -71,7 +72,7 @@ describe("业务模块完整入库契约", () => {
     const summary = await readFileRaw(`${project!.path}/wiki/sources/incoming.md`)
     expect(parseFrontmatter(summary).frontmatter?.tags).toContain("module/unclassified")
   })
-  it("未改源文档重新入库时保持生成缓存，仍纠正磁盘页面的旧分类", async () => {
+  it("关联页面被手工修改后重新生成核对，仍根据完整事实纠正分类", async () => {
     const config = { ...useWikiStore.getState().llmConfig, model: "test", apiKey: "test", maxContextSize: 128000 }
     const source = `${project!.path}/raw/sources/incoming.md`
     await autoIngest(project!.path, source, config)
@@ -80,7 +81,7 @@ describe("业务模块完整入库契约", () => {
     await writeFileRaw(path, previous.replace("module/query", "module/unclassified"))
     await autoIngest(project!.path, source, config)
     const saved = await readFileRaw(path)
-    expect(generationCalls).toBe(1)
+    expect(generationCalls).toBe(2)
     expect(parseFrontmatter(saved).frontmatter?.tags).toEqual(["SQL", "AST", "module/query"])
     expect(parseFrontmatter(saved).body).toBe(parseFrontmatter(previous).body)
   })

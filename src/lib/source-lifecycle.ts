@@ -40,6 +40,7 @@ import { isSensitiveConfigSourceFile } from "@/lib/source-filter"
 import { naturalCompare } from "@/lib/natural-sort"
 import type { SourceWatchConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useChatStore } from "@/stores/chat-store"
 import { preprocessSourceFiles } from "@/lib/source-preprocess"
 import { moveParsedMarkdown, removeParsedMarkdown } from "@/lib/parsed-source-output"
 
@@ -213,6 +214,14 @@ export async function migrateSourcePath(
     } catch (err) {
       console.warn("[source-lifecycle] failed to move optional parsed Markdown:", err)
     }
+    // 文档讨论随来源重命名迁移，避免保存时重新读入旧路径。
+    const oldAbsolute = `${pp}/raw/sources/${oldIdentity}`
+    const newAbsolute = `${pp}/raw/sources/${newIdentity}`
+    useChatStore.setState((state) => ({
+      conversations: state.conversations.map((conversation) => normalizePath(conversation.ingestSource ?? "") === oldAbsolute
+        ? { ...conversation, ingestSource: newAbsolute } : conversation),
+      ingestSource: normalizePath(state.ingestSource ?? "") === oldAbsolute ? newAbsolute : state.ingestSource,
+    }))
     return writes.length
   } catch (err) {
     if (newSummaryCreated) {

@@ -1,5 +1,6 @@
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
+import type { IngestResult } from "./ingest-result"
 
 /**
  * SHA256-based ingest cache.
@@ -11,6 +12,8 @@ interface CacheEntry {
   hash: string
   timestamp: number
   filesWritten: string[]
+  result?: IngestResult
+  pageHashes?: Record<string, string>
 }
 
 interface CacheData {
@@ -96,6 +99,13 @@ export async function checkIngestCache(
     }
   }
 
+  for (const [path, expected] of Object.entries(entry.pageHashes ?? {})) {
+    try {
+      if (!path.startsWith("wiki/") || path.split("/").some((part) => part === ".." || part === ".") || path.includes("\\")) return null
+      if (await sha256(await readFile(`${pp}/${path}`)) !== expected) return null
+    } catch { return null }
+  }
+
   return entry.filesWritten
 }
 
@@ -108,16 +118,27 @@ export async function saveIngestCache(
   sourceContent: string,
   filesWritten: string[],
   contract: string = "",
+  result?: IngestResult,
 ): Promise<void> {
   const cache = await loadCache(projectPath)
   const hash = await sha256(contract ? JSON.stringify([sourceContent, contract]) : sourceContent)
   const newEntries = { ...cache.entries }
+  const pageHashes: Record<string, string> = {}
+  if (result) {
+    for (const path of result.coveredPaths) pageHashes[path] = await sha256(await readFile(`${normalizePath(projectPath)}/${path}`))
+  }
   newEntries[sourceFileName] = {
     hash,
     timestamp: Date.now(),
     filesWritten,
+    ...(result ? { result, pageHashes } : {}),
   }
   await saveCache(projectPath, { entries: newEntries })
+}
+
+/** 仅在 checkIngestCache 已验证有效后读取完成结果，兼容旧文件清单调用方。 */
+export async function cachedIngestResult(projectPath: string, sourceIdentity: string): Promise<IngestResult | undefined> {
+  return (await loadCache(projectPath)).entries[sourceIdentity]?.result
 }
 
 /**
@@ -146,6 +167,13 @@ export async function moveIngestCacheEntry(
   const migratedEntry: CacheEntry = {
     ...entry,
     filesWritten: entry.filesWritten.map((path) => movedFiles.get(path) ?? path),
+    ...(entry.result ? { result: {
+      ...entry.result,
+      writtenPaths: entry.result.writtenPaths.map((path) => movedFiles.get(path) ?? path),
+      coveredPaths: entry.result.coveredPaths.map((path) => movedFiles.get(path) ?? path),
+    } } : {}),
+    // sources 字段迁移会改变正文哈希，下次入库重新核对关联页。
+    ...(entry.pageHashes ? { pageHashes: Object.fromEntries(Object.entries(entry.pageHashes).map(([path, hash]) => [movedFiles.get(path) ?? path, hash])) } : {}),
   }
   const newEntries = { ...cache.entries, [newSourceIdentity]: migratedEntry }
   delete newEntries[oldSourceIdentity]

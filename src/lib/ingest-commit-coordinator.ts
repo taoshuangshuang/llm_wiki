@@ -30,11 +30,8 @@ export class IngestCommitCoordinator {
     return {
       runCommit: async (operation) => {
         await predecessor
-        try {
-          return await operation()
-        } finally {
-          release()
-        }
+        // 一个来源可能补读、重规划并多次进入提交区；任务 finally 统一释放预约。
+        return operation()
       },
       release,
     }

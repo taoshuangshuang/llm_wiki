@@ -51,7 +51,22 @@ beforeEach(async () => {
     prompts.push(system)
     requests.push(String(messages[1]?.content ?? ""))
     let response = "QuerySchema 查询模型分析。"
-    if (system.includes("generate wiki files")) response = generation
+    const user = String(messages[1]?.content ?? "")
+    if (user.startsWith('{"task":"核对语义相似页面')) {
+      const input = JSON.parse(user)
+      callbacks.onToken(JSON.stringify({ decisions: input.candidates.map((candidate: { path: string }) => ({ path: candidate.path, verdict: "same" })) }))
+      callbacks.onDone()
+      return
+    }
+    if (user.startsWith('{"task":"规划长材料变更')) {
+      const input = JSON.parse(user)
+      callbacks.onToken(JSON.stringify({ targets: input.candidates, createNew: false }))
+      callbacks.onDone()
+      return
+    }
+    if (system.includes("你负责已有知识页的正文片段整理")) response = JSON.stringify({ unchanged: true })
+    else if (system.includes("本批次只处理来源摘要")) response = "---FILE: wiki/sources/incoming.md---\n---\ntype: source\ntitle: 输入资料\nsources: [incoming.md]\n---\n# 来源\n查询模型事实。\n---END FILE---"
+    else if (system.includes("generate wiki files")) response = generation
     else if (system.startsWith("You are merging")) response = `${oldPage}\n\npager 定义分页参数，conditions 定义查询条件。`
     else if (system.includes("业务模块分类器")) response = '{"moduleIds":["query"]}'
     else if (system.includes("identifying high-value follow-up")) response = ""
@@ -118,35 +133,39 @@ describe("提示词可配置且默认入库行为保持不变", () => {
       "## Chunk Analysis", "按 schema 判断候选页类型，解释分类依据。", "## Updated Global Digest",
       "{{独立成页与名称复用规则}}", "{{purpose_context}}", "{{schema_context}}", "{{index_context}}",
     ].join("\n"))
-    await ingest(4096)
+    // 缩短本测试的生成框架，为小窗口留下原文分批空间；分块分析仍使用真实项目模板。
+    await writeFileRaw(`${project.path}/prompts/02-01-Wiki页面生成.md`, "You generate wiki files. {{language_rule}} {{schema}} {{source_identity}} {{today}} {{purpose_context}} {{index_context}} {{overview_context}} {{来源摘要生成要求}} {{独立页面写作规则}}")
+    await writeFileRaw(`${project.path}/prompts/02-02-独立页面写作规则.md`, "按主题保留事实。")
+    generation = `---FILE: ${oldPath}---\n${oldPage}\n---END FILE---`
+    await ingest(12000)
     const chunkPrompts = prompts.filter((prompt) => prompt.includes("CUSTOM_CHUNK_TEMPLATE"))
     expect(chunkPrompts.length).toBeGreaterThan(1)
     expect(chunkPrompts.every((prompt) => prompt.includes("## Updated Global Digest"))).toBe(true)
     expect(chunkPrompts.every((prompt) => !prompt.includes("- New or updated entities"))).toBe(true)
-    expect(await fileExists(`${project.path}/${newPath}`)).toBe(true)
+    expect(await fileExists(`${project.path}/${oldPath}`)).toBe(true)
   })
 
-  it("仅修改提示词仍遵守原有缓存规则，清除该来源缓存后使用新的配置", async () => {
+  it("分析策略变化使完成缓存失效，清除缓存后仍使用最新配置", async () => {
     await ingest()
     await writeFileRaw(`${project.path}/prompts/01-03-独立成页与名称复用规则.md`, "CUSTOM_REANALYSIS_POLICY")
     await ingest()
-    expect(prompts).toHaveLength(2)
+    expect(prompts).toHaveLength(4)
     await removeFromIngestCache(project.path, "incoming.md")
     await ingest()
-    expect(prompts).toHaveLength(4)
-    expect(prompts[2]).toContain("CUSTOM_REANALYSIS_POLICY")
+    expect(prompts).toHaveLength(6)
+    expect(prompts[4]).toContain("CUSTOM_REANALYSIS_POLICY")
   })
 
-  it("已有路径沿用原合并机制，并读取项目配置的正文合并策略", async () => {
-    generation = `---FILE: ${oldPath}---\n${incoming.replace(/QuerySchema模型说明/g, "QuerySchema模型")}\n---END FILE---`
+  it("已有路径直接写完整稿，原合并策略不再触发二次正文生成", async () => {
+    generation = `---FILE: ${oldPath}---\n${oldPage}\n\npager 定义分页参数，conditions 定义查询条件。\n---END FILE---`
     await writeFileRaw(`${project.path}/prompts/04-02-页面内容合并规则.md`, "CUSTOM_MERGE_POLICY")
     await writeFileRaw(`${project.path}/prompts/04-01-页面合并任务.md`, DEFAULT_INGEST_PROMPTS.mergeTemplate.replace(
       "You are merging source-backed material", "You are merging CUSTOM_MERGE_TEMPLATE",
     ))
     await ingest()
-    expect(prompts).toHaveLength(3)
-    expect(prompts[2]).toContain("CUSTOM_MERGE_POLICY")
-    expect(prompts[2]).toContain("CUSTOM_MERGE_TEMPLATE")
+    expect(prompts).toHaveLength(2)
+    expect(prompts.some((prompt) => prompt.includes("CUSTOM_MERGE_POLICY"))).toBe(false)
+    expect(requests[1]).toContain("fields 定义查询字段")
     const saved = await readFileRaw(`${project.path}/${oldPath}`)
     expect(saved).toContain("fields 定义查询字段")
     expect(saved).toContain("pager 定义分页参数")

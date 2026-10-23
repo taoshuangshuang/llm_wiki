@@ -28,6 +28,8 @@ export interface Conversation {
   selectedSkills?: string[]
   contextFiles?: string[]
   reviewContext?: ReviewConversationContext
+  /** 文档讨论的来源随会话保存，避免切换会话后绑定到另一份材料。 */
+  ingestSource?: string | null
 }
 
 export interface MessageReference {
@@ -172,6 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       conversations: [newConversation, ...state.conversations],
       activeConversationId: id,
+      ingestSource: null,
+      mode: "chat",
       ...streamState(state.conversationStreams, id),
       selectedSkills: [],
       selectedContextFiles: [],
@@ -190,6 +194,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: remaining,
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
+        ingestSource: remaining.find((conversation) => conversation.id === newActiveId)?.ingestSource ?? null,
+        mode: remaining.find((conversation) => conversation.id === newActiveId)?.ingestSource ? "ingest" : "chat",
         ...withoutStream(state, id, newActiveId),
         selectedSkills: remaining.find((conversation) => conversation.id === newActiveId)?.selectedSkills ?? [],
         selectedContextFiles: remaining.find((conversation) => conversation.id === newActiveId)?.contextFiles ?? [],
@@ -199,6 +205,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveConversation: (id) =>
     set((state) => ({
       activeConversationId: id,
+      ingestSource: state.conversations.find((conversation) => conversation.id === id)?.ingestSource ?? null,
+      mode: state.conversations.find((conversation) => conversation.id === id)?.ingestSource ? "ingest" : "chat",
       // 切换只改变展示的会话；生成中的缓存仍属于原请求，切回时需要完整恢复。
       streamingContent: state.conversationStreams[id ?? ""]?.content ?? "",
       selectedSkills: state.conversations.find((conversation) => conversation.id === id)?.selectedSkills ?? [],
@@ -351,7 +359,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMode: (mode) => set({ mode }),
 
-  setIngestSource: (ingestSource) => set({ ingestSource }),
+  setIngestSource: (ingestSource) => set((state) => ({
+    ingestSource,
+    conversations: state.conversations.map((conversation) => conversation.id === state.activeConversationId
+      ? { ...conversation, ingestSource } : conversation),
+  })),
 
   clearMessages: () =>
     set((state) => ({

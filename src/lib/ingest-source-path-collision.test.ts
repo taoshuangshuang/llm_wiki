@@ -16,6 +16,7 @@ vi.mock("./ingest-acceptance", () => ({
 }))
 
 let sourceMarkers: string[] = []
+let lastSourceMarker = "unknown project"
 let failLongChunksOnce = new Set<number>()
 let truncateLongChunksOnce = new Set<number>()
 let truncateLongAboveChars = 0
@@ -116,6 +117,29 @@ vi.mock("./llm-client", () => ({
       return
     }
 
+    if (userPrompt.startsWith('{"task":"核对语义相似页面')) {
+      const input = JSON.parse(userPrompt)
+      cb.onToken(JSON.stringify({ decisions: input.candidates.map((candidate: { path: string }) => ({ path: candidate.path, verdict: "same" })) }))
+      cb.onDone()
+      return
+    }
+    if (userPrompt.startsWith('{"task":"规划长材料变更')) {
+      const input = JSON.parse(userPrompt)
+      cb.onToken(JSON.stringify({ targets: input.candidates, createNew: false }))
+      cb.onDone()
+      return
+    }
+    if (systemPrompt.includes("generate wiki files") && interactiveGenerationOverride) {
+      cb.onToken(interactiveGenerationOverride)
+      cb.onDone()
+      return
+    }
+
+    if (systemPrompt.includes("本批次只生成知识页") && !interactiveGenerationOverride && !generationSuffix) {
+      cb.onToken("---NO KNOWLEDGE---")
+      cb.onDone()
+      return
+    }
     const targetMatch = systemPrompt.match(
       /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
     )
@@ -140,7 +164,8 @@ vi.mock("./llm-client", () => ({
       return
     }
 
-    const marker = sourceMarkers.shift() ?? "unknown project"
+    const marker = sourceMarkers.shift() ?? lastSourceMarker
+    lastSourceMarker = marker
     const targetPath = targetMatch[1]
     const sourceIdentity =
       systemPrompt.match(/original source file is:\s*\*\*([^*]+)\*\*/i)?.[1] ?? "config.yaml"
@@ -188,6 +213,7 @@ describe("autoIngest source summary paths", () => {
 
   beforeEach(async () => {
     sourceMarkers = []
+    lastSourceMarker = "unknown project"
     failLongChunksOnce = new Set()
     truncateLongChunksOnce = new Set()
     truncateLongAboveChars = 0
@@ -338,20 +364,23 @@ describe("autoIngest source summary paths", () => {
     expect(mergeRequestCount).toBe(0)
   })
 
-  it("多来源页面合并遵守入库思考设置，不接受达到输出上限的半截合并正文", async () => {
+  it("多来源完整稿在生成时读取旧页且遵守入库思考设置，不再调用正文合并", async () => {
     if (!tmp) throw new Error("missing temp project")
     const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
     const sharedPath = `${tmp.path}/wiki/concepts/shared.md`
     await writeFileRaw(sharedPath, '---\ntitle: Shared\ntype: concept\nsources: [other.md]\n---\n# Shared\nOld evidence.')
-    generationSuffix = '\n---FILE: wiki/concepts/shared.md---\n---\ntitle: Shared\ntype: concept\nsources: [project-a/config.yaml]\n---\n# Shared\nNew evidence.\n---END FILE---'
+    generationSuffix = '\n---FILE: wiki/concepts/shared.md---\n---\ntitle: Shared\ntype: concept\nsources: [project-a/config.yaml]\n---\n# Shared\nOld evidence.\nNew evidence.\n---END FILE---'
     // 半截响应长度充足，不能仅靠正文长度保护识别；必须遵守模型的截断标记。
     truncatedMergeResponse = '---\ntitle: Shared\ntype: concept\n---\n# Shared\nINCOMPLETE_MERGE '.repeat(5)
     await autoIngest(tmp.path, sourcePath, {
       ...useWikiStore.getState().llmConfig, maxContextSize: 1_000_000,
       reasoning: { mode: "max" }, ingestReasoning: { mode: "off" },
     })
-    const call = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).startsWith("You are merging "))
-    expect(call?.[4]).toMatchObject({ reasoning: { mode: "off" }, max_tokens: 32_768 })
+    expect(mergeRequestCount).toBe(0)
+    const calls = mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(calls.length).toBeGreaterThan(1)
+    expect(calls[calls.length - 1]?.[4]).toMatchObject({ reasoning: { mode: "off" }, max_tokens: 32_768 })
+    expect(String(calls[calls.length - 1]?.[1][1].content)).toContain("Old evidence.")
     const saved = await fs.readFile(sharedPath, "utf8")
     expect(saved).not.toContain("INCOMPLETE_MERGE")
     expect(saved).toContain("New evidence.")
@@ -564,19 +593,15 @@ describe("autoIngest source summary paths", () => {
     )
     expect(generationCall).toBeTruthy()
     const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
-    expect(generationPrompt).toContain("Long Source Context")
-    expect(generationPrompt).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    const finalDigestSection = generationPrompt
-      .split("## Source Context")[1]
-      ?.split("## Chunk Analysis Notes")[0] ?? ""
-    expect(finalDigestSection).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    expect(finalDigestSection).not.toContain(
-      `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
-    )
+    // 长材料生成必须看到原文分片，不能仅凭分析摘要写最终稿。
+    expect(generationPrompt).toContain("## Source Context")
+    const generationCalls = mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0]?.content).includes("generate wiki files"))
+    expect(generationCalls.length).toBeGreaterThan(1)
+    const allEvidence = generationCalls.map(([, messages]) => String(messages[1]?.content)).join("\n")
+    for (const chapter of ["Chapter One", "Chapter Two", "Chapter Three", "A".repeat(200), "B".repeat(200), "C".repeat(200)]) {
+      expect(allEvidence).toContain(chapter)
+    }
+
   })
 
   it("来源能放入上下文但分析输出截断时，自动分块恢复而不直接终止入库", async () => {
@@ -1010,12 +1035,12 @@ describe("autoIngest source summary paths", () => {
     const analysisCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
       String(messages[0]?.content ?? "").startsWith("You are an expert research analyst"),
     )
-    expect(analysisCalls).toHaveLength(1)
+    expect(analysisCalls).toHaveLength(change === "index" ? 0 : 1)
     // 分析失效时不能继续跳过旧规则下写入的页面，必须重新生成并重新验收。
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
       String(messages[0]?.content ?? "").includes("## What to generate"),
     )
-    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("## Resume checkpoint")
+    if (change !== "index") expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("## Resume checkpoint")
     expect(await fs.readdir(`${tmp.path}/.llm-wiki/ingest-analysis`)).toHaveLength(0)
   })
 
@@ -1185,6 +1210,7 @@ describe("autoIngest source summary paths", () => {
         {
           id: conversationId,
           title: "Interactive source summary",
+          ingestSource: `${tmp.path}/raw/sources/project-a/config.yaml`,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
@@ -1218,7 +1244,7 @@ describe("autoIngest source summary paths", () => {
     const staleSummaryPath = path.join(tmp.path, "wiki", "sources", "config.md")
     const content = await fs.readFile(canonicalSummaryPath, "utf8")
 
-    expect(writtenPaths.map((p) => p.replace(/\\/g, "/"))).toEqual([canonicalSummaryPath])
+    expect(writtenPaths).toContain(canonicalSummary)
     await expect(fs.access(staleSummaryPath)).rejects.toThrow()
     expect(content).toContain('sources: ["project-a/config.yaml"]')
   })
@@ -1230,17 +1256,20 @@ describe("autoIngest source summary paths", () => {
       "---FILE: wiki\\overview.MD---\n# hostile overview\n---END FILE---",
       "---FILE: ../escape.md---\n# escape\n---END FILE---",
     ].join("\n")
-    useChatStore.setState({ ingestSource: `${tmp.path}/raw/sources/project-a/config.yaml` })
+    useChatStore.getState().setIngestSource(`${tmp.path}/raw/sources/project-a/config.yaml`)
 
     const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
-
-    expect(written).toEqual([])
+    expect(written).not.toContain("wiki/INDEX.md")
+    expect(await fs.readFile(`${tmp.path}/wiki/index.md`, "utf8")).not.toContain("hostile")
+    expect(await fs.readFile(`${tmp.path}/wiki/overview.md`, "utf8")).not.toContain("hostile")
     await expect(fs.access(path.join(tmp.path, "escape.md"))).rejects.toThrow()
   })
 
   // 通过真实临时文件验证交互入库也使用同一命名规则，不仅验证辅助函数。
   it.each(["/", "\\"])("交互入库将标题中的 %s 转为连字符并同步正文引用", async (separator) => {
     if (!tmp) throw new Error("missing temp project")
+    const conversation = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessageToConversation(conversation, "user", "保存动作与插件的讨论结论。")
     const title = `YPD问题排查（动作${separator}插件）`
     interactiveGenerationOverride = [
       `---FILE: wiki/goals/${title}.md---`,
@@ -1253,7 +1282,7 @@ describe("autoIngest source summary paths", () => {
 
     const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
     const expectedPath = `${tmp.path}/wiki/goals/YPD问题排查（动作-插件）.md`
-    expect(written).toContain(expectedPath)
+    expect(written).toContain("wiki/goals/YPD问题排查（动作-插件）.md")
     expect(await fs.readFile(expectedPath, "utf8")).toContain(`title: '${title}'`)
     expect(await fs.readFile(`${tmp.path}/wiki/goals/导航.md`, "utf8"))
       .toContain("[[YPD问题排查（动作-插件）]]")
@@ -1262,6 +1291,8 @@ describe("autoIngest source summary paths", () => {
 
   it("sanitizes malformed citation links in interactive writes", async () => {
     if (!tmp) throw new Error("missing temp project")
+    const conversation = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessageToConversation(conversation, "user", "保存引文核对的讨论结论。")
     interactiveGenerationOverride = [
       "---FILE: wiki/entities/citations.md---",
       "---",
@@ -1271,12 +1302,12 @@ describe("autoIngest source summary paths", () => {
       "Evidence [[1]] and [[target|label].",
       "---END FILE---",
     ].join("\n")
-    useChatStore.setState({ ingestSource: null })
+    useChatStore.getState().setIngestSource(null)
 
     const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
 
-    expect(written).toHaveLength(1)
-    const content = await fs.readFile(written[0], "utf8")
+    expect(written).toContain("wiki/entities/citations.md")
+    const content = await fs.readFile(`${tmp.path}/wiki/entities/citations.md`, "utf8")
     expect(content).toContain("Evidence [1] and [[target|label]].")
   })
 })
