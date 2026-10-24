@@ -1,3 +1,4 @@
+import { excludedSourceTitleKeyword } from "./source-watch-config"
 import {
   createDirectory,
   deleteFile,
@@ -803,6 +804,17 @@ async function autoIngestImpl(
   })
 
   try {
+  const excludedKeywords = useWikiStore.getState().sourceWatchConfig.excludedTitleKeywords ?? []
+  const skipExcluded = (keyword: string): string[] => {
+    const reason = `标题命中排除词「${keyword}」，已跳过入库，原始资料保留`
+    diagnostics?.skip(reason)
+    options?.onResult?.({ outcome: "skipped", writtenPaths: [], coveredPaths: [], reason })
+    activity.updateItem(activityId, { status: "done", detail: reason })
+    return []
+  }
+  throwIfIngestAborted(signal, activityId)
+  const excludedFile = excludedSourceTitleKeyword(sp, "", excludedKeywords)
+  if (excludedFile) return skipExcluded(excludedFile)
   // ── MinerU preprocessing for PDF files ──
   const lowerExt = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
   const isPdf = lowerExt === "pdf"
@@ -855,6 +867,8 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+  const excludedTitle = excludedSourceTitleKeyword(sp, sourceContent, excludedKeywords)
+  if (excludedTitle) return skipExcluded(excludedTitle)
   const promptPolicies = await loadProjectIngestPrompts(pp)
   await diagnostics?.save("source.json", { content: sourceContent, mineruSucceeded })
   await diagnostics?.save("context.json", {
@@ -894,7 +908,7 @@ async function autoIngestImpl(
   // 旧版验收缓存不能复用；审阅规则修改后，下次入库重新检查。
   const acceptanceContract = JSON.stringify({ version: 5, workflow: "complete-draft-v1", generateSourceSummary, schema, purpose,
     outputLanguage: useWikiStore.getState().outputLanguage,
-    analysis: promptPolicies.analysis, analysisTemplate: promptPolicies.analysisTemplate, generation: promptPolicies.generation, generationTemplate: promptPolicies.generationTemplate,
+    analysis: promptPolicies.analysis, knowledgeExtraction: promptPolicies.knowledgeExtraction, analysisTemplate: promptPolicies.analysisTemplate, generation: promptPolicies.generation, generationTemplate: promptPolicies.generationTemplate,
     acceptance: promptPolicies.acceptance, guidance: options?.guidance })
   const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent, acceptanceContract)
   diagnostics?.cache(cachedFiles !== null)
@@ -1150,7 +1164,7 @@ async function autoIngestImpl(
   const analysisFingerprint = (_currentIndex: string, _currentOverview: string) => hashTextHex(JSON.stringify({
     version: 2, sourceHash, sourceIdentity, folderContext, schema, purpose, config: analysisConfig,
     outputLanguage: getOutputLanguage(enrichedSourceContent),
-    policy: promptPolicies.analysis, template: promptPolicies.analysisTemplate,
+    knowledgeExtraction: promptPolicies.knowledgeExtraction, policy: promptPolicies.analysis, template: promptPolicies.analysisTemplate,
     chunkTemplate: promptPolicies.chunkAnalysisTemplate,
   }))
   const cachedAnalysis = await loadSourceAnalysisCheckpoint(sourceAnalysisPath, analysisFingerprint(index, overview))
@@ -1178,7 +1192,7 @@ async function autoIngestImpl(
       sourceBudget,
       activityId,
       signal,
-      promptPolicies.analysis,
+      `${promptPolicies.analysis}\n\n${promptPolicies.knowledgeExtraction}`,
       promptPolicies.chunkAnalysisTemplate,
       enrichedSourceContent.length <= sourceBudget ? recoveryTarget : undefined,
     )
@@ -1206,7 +1220,7 @@ async function autoIngestImpl(
     await streamChat(
       withLlmStage(llmConfig, "analysis"),
       [
-        { role: "system", content: buildAnalysisPrompt(purpose, "", sourceContext, schema, promptPolicies.analysis, promptPolicies.analysisTemplate) },
+        { role: "system", content: buildAnalysisPrompt(purpose, "", sourceContext, schema, promptPolicies.analysis, promptPolicies.analysisTemplate, promptPolicies.knowledgeExtraction) },
         { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${sourceContext}` },
       ],
       {
@@ -1225,7 +1239,7 @@ async function autoIngestImpl(
       const recovery = await analyzeLongSourceInChunks(
         pp, llmConfig, purpose, schema, "", sourceIdentity, sourceSummarySlug,
         folderContext, enrichedSourceContent, sourceBudget, activityId, signal,
-        promptPolicies.analysis, promptPolicies.chunkAnalysisTemplate,
+        `${promptPolicies.analysis}\n\n${promptPolicies.knowledgeExtraction}`, promptPolicies.chunkAnalysisTemplate,
         recoveryTarget,
       )
       if (!recovery.chunked) {
@@ -2831,6 +2845,7 @@ export function buildAnalysisPrompt(
   schema: string = "",
   analysisPolicy: string = DEFAULT_INGEST_PROMPTS.analysis,
   analysisTemplate: string = DEFAULT_INGEST_PROMPTS.analysisTemplate,
+  knowledgeExtraction: string = DEFAULT_INGEST_PROMPTS.knowledgeExtraction,
 ): string {
   const prompt = renderIngestPromptTemplate(analysisTemplate, {
     language_rule: languageRule(sourceContent),
@@ -2841,7 +2856,7 @@ export function buildAnalysisPrompt(
     purpose_context: purpose ? `## Wiki Purpose (for context)\n${purpose}` : "",
     index_context: index ? `## Current Wiki Index (for checking existing content)\n${index}` : "",
   }, ["language_rule", "schema_context", "purpose_context", "index_context"])
-  return `${prompt}\n\n本阶段独立理解来源，不依据目录决定删减事实。分析结束后追加可检索知识单元：\n---KNOWLEDGE UNITS---\n[{"topic":"来源中的明确主题","keywords":["精确名称","参数或核心术语"],"sourceStartLine":1,"sourceEndLine":10}]\n---END KNOWLEDGE UNITS---\n按独立主题分别列出，标明原文起止行（从1计数，包含端点），允许多个单元共同补充一页；不要输出思考过程。`
+  return `${prompt}\n\n${knowledgeExtraction}\n\n本阶段独立理解来源，不依据目录决定删减事实。分析结束后追加可检索知识单元：\n---KNOWLEDGE UNITS---\n[{"topic":"来源中的明确主题","keywords":["精确名称","参数或核心术语"],"sourceStartLine":1,"sourceEndLine":10}]\n---END KNOWLEDGE UNITS---\n按独立主题分别列出，标明原文起止行（从1计数，包含端点），允许多个单元共同补充一页；不要输出思考过程。`
 }
 
 /**
@@ -3874,7 +3889,7 @@ export async function executeIngestWrites(
   const paths = await autoIngest(pp, sourcePath, llmConfig, signal, undefined, undefined, {
     guidance, onResult: (value) => { result = value },
   })
-  getStore().addMessageToConversation(conversationId, "system", result?.outcome === "unchanged"
+  getStore().addMessageToConversation(conversationId, "system", result?.outcome === "skipped" ? result.reason ?? "已按标题排除规则跳过入库。" : result?.outcome === "unchanged"
     ? "已有知识已覆盖本次材料，无需修改正文。风险项请在原有审阅面板处理。"
     : `Files written to wiki:\n${paths.join("\n")}`)
   return paths

@@ -1,0 +1,1 @@
+[{"role": "user", "content": "请把 数据.csv 的姓名标准化，保留原有行顺序，生成 result.csv。"}, {"role": "user", "content": "现在将刚才的结果按 name 升序排序，更新 result.csv，数值保持不变。"}]

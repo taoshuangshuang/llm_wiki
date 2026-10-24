@@ -483,6 +483,18 @@ describe("ingest-queue — retry & failure", () => {
     expect(getQueue()).toHaveLength(0)
   })
 
+  it("标题排除后完成出队，不重试也不触发入库后的审阅扫描", async () => {
+    mockAutoIngest.mockImplementation(async (_project, _source, _config, _signal, _folder, _written, options) => {
+      options?.onResult?.({ outcome: "skipped", writtenPaths: [], coveredPaths: [], reason: "标题命中周会" })
+      return []
+    })
+    await enqueueIngest(TEST_ID, "raw/sources/周会.md")
+    await flushMicrotasks(50)
+    expect(mockAutoIngest).toHaveBeenCalledOnce()
+    expect(getQueue()).toHaveLength(0)
+    expect(mockSweep).not.toHaveBeenCalled()
+  })
+
   it("treats autoIngest resolving to an empty array as a failure (not silent success)", async () => {
     // Regression: a webview refresh could abort the LLM fetch, making
     // streamChat's error path fire, which historically caused autoIngest

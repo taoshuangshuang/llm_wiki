@@ -89,7 +89,7 @@ beforeEach(async () => {
   vi.mocked(streamChat).mockImplementation(async (_config, messages, callbacks) => {
     const system = String(messages[0].content)
     const user = String(messages[1]?.content ?? "")
-    let response = "类型映射及 SQL 的来源分析。"
+    let response = '类型映射及 SQL 的来源分析。\n---KNOWLEDGE UNITS---\n[{"topic":"类型映射","keywords":["类型映射","SQL"],"sourceStartLine":1,"sourceEndLine":10}]\n---END KNOWLEDGE UNITS---'
     if (user.startsWith('{"task":"核对语义相似页面')) {
       const input = JSON.parse(user)
       callbacks.onToken(JSON.stringify({ decisions: input.candidates.map((candidate: { path: string }) => ({ path: candidate.path, verdict: "same" })) }))

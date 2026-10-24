@@ -206,6 +206,7 @@ describe("入库诊断现场", () => {
       const system = JSON.parse(String(options.body)).messages[0].content as string
       if (system.includes("generate wiki files")) return response(`---FILE: ${pagePath}---\n${page}\n已有材料定义排序。\n---END FILE---`)
       if (system.includes("业务模块分类器")) return response('{"moduleIds":["query"]}')
+      if (system.includes("expert research analyst")) return response('---KNOWLEDGE UNITS---\n[{"topic":"查询","keywords":["查询"],"sourceStartLine":1,"sourceEndLine":1}]\n---END KNOWLEDGE UNITS---')
       return normalResponder(url, options)
     })
     await autoIngest(project.path, `${project.path}/raw/sources/source.md`, config)

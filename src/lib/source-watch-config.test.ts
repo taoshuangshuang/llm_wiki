@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   DEFAULT_SOURCE_WATCH_CONFIG,
+  excludedSourceTitleKeyword,
   isPathAllowedBySourceWatch,
   normalizeSourceWatchConfig,
 } from "@/lib/source-watch-config"
@@ -85,5 +86,17 @@ describe("source watch config", () => {
     expect(config.excludeExtensions).toEqual(["json", "yaml", "xml", "dll"])
     expect(config.excludeDirs).toEqual([".git", "node_modules", "drafts", "wip"])
     expect(config.excludeGlobs).toEqual(["*.private.*", "~$*"])
+  })
+})
+
+
+describe("标题排除规则", () => {
+  it("仅匹配文件名及主标题，目录、正文、子章节和代码示例不排除整篇文档", () => {
+    const keywords = ["周会", "压测", "绩效"]
+    expect(excludedSourceTitleKeyword("/周会/说明.md", "# 服务说明\n正文讨论压测。\n## 绩效\n", keywords)).toBeUndefined()
+    expect(excludedSourceTitleKeyword("说明.md", "```md\n# 周会\n```\n# 服务说明", keywords)).toBeUndefined()
+    expect(excludedSourceTitleKeyword("说明.md", "---\ntitle: 服务压测报告\n---\n正文", keywords)).toBe("压测")
+    expect(excludedSourceTitleKeyword("周会.md", "", keywords)).toBe("周会")
+    expect(excludedSourceTitleKeyword("周会.md", "", [])).toBeUndefined()
   })
 })

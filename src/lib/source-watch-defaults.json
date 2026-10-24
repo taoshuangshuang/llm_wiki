@@ -70,5 +70,6 @@
     "draft-*",
     "*.private.*"
   ],
+  "excludedTitleKeywords": [],
   "maxFileSizeMb": 100
 }

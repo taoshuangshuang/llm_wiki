@@ -280,6 +280,8 @@ interface SourceWatchConfig {
   excludeExtensions: string[]
   excludeDirs: string[]
   excludeGlobs: string[]
+  /** 标题包含任一词时跳过知识提取，原始资料仍保留。 */
+  excludedTitleKeywords?: string[]
   maxFileSizeMb: number
 }
 

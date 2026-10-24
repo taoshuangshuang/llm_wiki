@@ -62,10 +62,16 @@ export async function generateBatchedDrafts(options: {
   const sourceLimit = Math.max(256, Math.min(Math.floor(materialBudget * 0.28), Math.floor(options.outputBudget * 0.5)))
   const evidenceUnits = context.units.filter((unit) => unit.text.trim())
   const sourceParts = (evidenceUnits.length ? [...new Set(evidenceUnits.map((unit) => unit.text))] : [options.source])
-    .flatMap((text) => splitEvidence(text, sourceLimit))
+    .flatMap((text) => splitEvidence(text, sourceLimit).map((source) => ({
+      source, units: evidenceUnits.filter((unit) => unit.text === text),
+    })))
   const analysis = options.analysis.length <= sourceLimit ? options.analysis : "完整来源分析已用于检索；本批次以随附原文及候选正文为准，保留关键事实、条件、代码与表格。"
-  for (const [sourceIndex, source] of sourceParts.entries()) {
-    const plan = await options.understand(source, working)
+  for (const [sourceIndex, part] of sourceParts.entries()) {
+    const { source, units } = part
+    const paths = new Set(units.flatMap((unit) => unit.candidatePaths))
+    const scoped = units.some((unit) => unit.query.trim())
+      ? new Map([...working].filter(([path]) => paths.has(path) || changed.has(path) && !context.pages.has(path))) : working
+    const plan = await options.understand(source, scoped)
     const targets: Array<string | null> = [...new Set(plan.targets)]
     if (plan.createNew) targets.push(null)
     if (!targets.length) throw new Error("长材料变更规划没有目标或明确的新建决定")
@@ -143,7 +149,8 @@ export async function generateBatchedDrafts(options: {
   }
   const summaryDraft = options.sourceSummaryPath ? await generateBatchedDrafts({
     ...options, sourceSummaryPath: undefined, allowNoKnowledge: false,
-    context: { ...context, pages: summary === undefined ? new Map() : new Map([[options.sourceSummaryPath, summary]]) },
+    context: { ...context, units: context.units.map((unit) => ({ ...unit, candidatePaths: [options.sourceSummaryPath!] })),
+      pages: summary === undefined ? new Map() : new Map([[options.sourceSummaryPath, summary]]) },
     understand: async (_source, pages) => ({ targets: pages.has(options.sourceSummaryPath!) ? [options.sourceSummaryPath!] : [], createNew: !pages.has(options.sourceSummaryPath!) }),
     request: (input) => request({ ...input, scope: "source-summary", instruction: `${input.instruction}\n只处理来源摘要 ${options.sourceSummaryPath}，累计保留其他分段事实，不返回任何其他页面。` }),
     parse: (output) => {

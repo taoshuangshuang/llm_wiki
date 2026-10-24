@@ -1,6 +1,7 @@
 /** 正文改动与事实覆盖分开记录；无变更也有可审阅、可失效的页面依据。 */
 export interface IngestResult {
-  outcome: "written" | "unchanged"
+  outcome: "written" | "unchanged" | "skipped"
+  reason?: string
   writtenPaths: string[]
   coveredPaths: string[]
 }

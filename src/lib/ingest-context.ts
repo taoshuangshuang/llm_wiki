@@ -13,6 +13,8 @@ export interface IngestKnowledgeUnit {
   text: string
   query: string
   candidatePaths: string[]
+  /** 结构化分析给出的完整词组；保留其中的空格和技术标点。 */
+  keywords?: string[]
 }
 
 export interface IngestCandidateContext {
@@ -23,17 +25,9 @@ export interface IngestCandidateContext {
   warnings: string[]
 }
 
-/** 保留精确标识与中文短词，避免只按拉丁分词漏掉中文标题。 */
-function terms(text: string): Set<string> {
-  const result = new Set<string>()
-  for (const word of text.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? []) {
-    if (word.length < 2) continue
-    result.add(word)
-    if (/[\u3400-\u9fff]/.test(word)) {
-      for (let index = 0; index < word.length - 1; index++) result.add(word.slice(index, index + 2))
-    }
-  }
-  return result
+/** 使用分析模型提供的完整检索词，不再把中文术语拆成两字符碎片。 */
+function terms(text: string, keywords?: readonly string[]): Set<string> {
+  return new Set((keywords ?? text.split(/[\s：:，,、]+/)).map((word) => word.trim().toLowerCase()).filter((word) => word.length >= 2))
 }
 
 /** 来源章节是分析结果的证据边界；同时保留分析提出的跨章节主题检索词。 */
@@ -54,7 +48,7 @@ function knowledgeUnits(source: string, analysis: string): IngestKnowledgeUnit[]
       const valid = Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start && end <= lines.length
       const text = valid ? lines.slice(start - 1, end).join("\n") + (end < lines.length ? "\n" : "") : ""
       if (valid) for (let line = start - 1; line < end; line++) covered.add(line)
-      units.push({ id: `analysis-${index + 1}`, text, query: `${item.topic}\n${item.keywords.join(" ")}`, candidatePaths: [] })
+      units.push({ id: `analysis-${index + 1}`, text, query: `${item.topic}\n${item.keywords.join(" ")}`, keywords: [item.topic, ...item.keywords], candidatePaths: [] })
     }
   }
   // 分析没有标注范围或遗漏的原文仍进入证据任务，不能因分析摘要遗漏而丢弃事实。
@@ -68,11 +62,11 @@ function knowledgeUnits(source: string, analysis: string): IngestKnowledgeUnit[]
   }
   if (current.trim()) remaining.push(current)
   for (const text of remaining.flatMap((part) => part.split(/(?=^#{1,6}\s+\S)/m)).filter((part) => part.trim())) {
-    units.push({ id: `source-${units.length + 1}`, text, query: text, candidatePaths: [] })
+    units.push({ id: `source-${units.length + 1}`, text, query: "", candidatePaths: [] })
   }
   if (!structured) {
     const topics = analysis.split(/\r?\n/).filter((line) => /^\s*(?:[-*]|\d+[.)]|#{1,6})\s+/.test(line))
-    for (const query of topics) units.push({ id: `analysis-${units.length + 1}`, text: "", query, candidatePaths: [] })
+    for (const query of topics) units.push({ id: `analysis-${units.length + 1}`, text: "", query: query.replace(/^\s*(?:[-*]|\d+[.)]|#{1,6})\s+/, ""), candidatePaths: [] })
   }
   return units
 }
@@ -119,25 +113,44 @@ export async function prepareIngestCandidateContext(
   const semantic = new IngestSemanticRecall(root, embedding, (warning) => warnings.push(warning), signal)
   const units = knowledgeUnits(source, analysis)
   const pages = new Map<string, string>()
+  const relevance = new Map<string, number>()
   const recalled = new Map<string, string[]>()
   for (const unit of units) {
     if (signal?.aborted) throw new Error("入库已取消")
+    if (!unit.query.trim()) continue
     const previous = recalled.get(unit.query)
     if (previous) {
       unit.candidatePaths = previous
       continue
     }
-    const query = terms(unit.query)
+    const query = terms(unit.query, unit.keywords)
     const ranked = [...catalog].map(([path, content]) => ({ path, score: keywordScore(query, path, content) }))
       .filter((item) => item.score > 0).sort((left, right) => right.score - left.score)
     const semanticPaths = await semantic.find(unit.query, [...catalog.keys()])
-    unit.candidatePaths = [...new Set([...associated, ...ranked.slice(0, 12).map((item) => item.path), ...semanticPaths])]
-    recalled.set(unit.query, unit.candidatePaths)
+    // 两路召回只是候选池；按单元内相对排名融合，全篇统一控制正文候选数量。
+    const keywordPaths = ranked.slice(0, 12).map((item) => item.path)
+    unit.candidatePaths = [...new Set([...associated, ...keywordPaths, ...semanticPaths])]
     for (const path of unit.candidatePaths) {
-      const content = catalog.get(path)
-      if (content !== undefined) pages.set(path, content)
+      const keywordRank = keywordPaths.indexOf(path)
+      const semanticRank = semanticPaths.indexOf(path)
+      const score = (keywordRank < 0 ? 0 : 1 / (keywordRank + 1)) + (semanticRank < 0 ? 0 : 1 / (semanticRank + 1))
+      // 重复提及不抬高全局分数，避免通用主题压过其他单元的直接命中。
+      relevance.set(path, Math.max(relevance.get(path) ?? 0, score))
     }
+    recalled.set(unit.query, unit.candidatePaths)
   }
+  // 来源修订必须回看此前关联页；超过预算时显式提示，不能为凑数漏掉旧说法。
+  const selected = new Set(associated)
+  for (const [path] of [...relevance].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))) {
+    if (selected.size >= 10) break
+    selected.add(path)
+  }
+  if (associated.size > 10) warnings.push(`本来源历史关联 ${associated.size} 页，超过候选预算 10 页；全部保留用于来源修订复核`)
+  for (const path of selected) {
+    const content = catalog.get(path)
+    if (content !== undefined) pages.set(path, content)
+  }
+  for (const unit of units) unit.candidatePaths = unit.candidatePaths.filter((path) => pages.has(path))
   return { units, pages, knownPaths, warnings }
 }
 

@@ -240,3 +240,26 @@ describe("知识单元前置检索与完整更新稿", () => {
   })
 
 })
+
+
+describe("标题排除入口", () => {
+  it.each(["file", "heading"])("%s 命中时不调用模型，保留原文并记录跳过状态", async (mode) => {
+    const config = useWikiStore.getState().sourceWatchConfig
+    useWikiStore.setState({ sourceWatchConfig: { ...config, excludedTitleKeywords: ["周会", "压测", "绩效"] } })
+    const sourcePath = `${project.path}/raw/sources/${mode === "file" ? "研发周会" : "new"}.md`
+    const content = mode === "heading" ? "# 服务压测记录\n\n完整原始资料。" : "# 研发记录\n\n完整原始资料。"
+    await writeFileRaw(sourcePath, content)
+    let result: unknown
+    try {
+      await expect(autoIngest(project.path, sourcePath, useWikiStore.getState().llmConfig,
+        undefined, undefined, undefined, { onResult: (value) => { result = value } })).resolves.toEqual([])
+      expect(streamChat).not.toHaveBeenCalled()
+      expect(await readFileRaw(sourcePath)).toBe(content)
+      expect(result).toMatchObject({ outcome: "skipped" })
+      expect(useActivityStore.getState().items[0]).toMatchObject({ status: "done", detail: expect.stringContaining("已跳过") })
+      const runs = await realFs.listDirectory(`${project.path}/.llm-wiki/ingest-diagnostics`)
+      const manifest = JSON.parse(await readFileRaw(`${runs[0].path}/manifest.json`))
+      expect(manifest.status).toBe("skipped")
+    } finally { useWikiStore.setState({ sourceWatchConfig: config }) }
+  })
+})

@@ -50,7 +50,7 @@ beforeEach(async () => {
     const system = String(messages[0].content)
     prompts.push(system)
     requests.push(String(messages[1]?.content ?? ""))
-    let response = "QuerySchema 查询模型分析。"
+    let response = 'QuerySchema 查询模型分析。\n---KNOWLEDGE UNITS---\n[{"topic":"QuerySchema","keywords":["QuerySchema"],"sourceStartLine":1,"sourceEndLine":1}]\n---END KNOWLEDGE UNITS---'
     const user = String(messages[1]?.content ?? "")
     if (user.startsWith('{"task":"核对语义相似页面')) {
       const input = JSON.parse(user)
@@ -93,9 +93,11 @@ describe("提示词可配置且默认入库行为保持不变", () => {
 
   it("自定义分析和生成策略进入原有阶段，输出协议直接写在默认模板中", async () => {
     await writeFileRaw(`${project.path}/prompts/01-03-独立成页与名称复用规则.md`, "CUSTOM_ANALYSIS_POLICY")
+    await writeFileRaw(`${project.path}/prompts/01-04-知识单元与检索词提取规则.md`, "只使用来源中的精确技术标识检索。")
     await writeFileRaw(`${project.path}/prompts/02-02-独立页面写作规则.md`, "CUSTOM_GENERATION_POLICY")
     await ingest()
     expect(prompts[0]).toContain("CUSTOM_ANALYSIS_POLICY")
+    expect(prompts[0]).toContain("只使用来源中的精确技术标识检索。")
     expect(prompts[1]).toContain("CUSTOM_GENERATION_POLICY")
     expect(prompts[1]).toContain("---END FILE---")
     expect(prompts).toHaveLength(2)

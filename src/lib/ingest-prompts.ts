@@ -1,5 +1,6 @@
 /** 项目级入库策略：默认 Markdown 首次落盘，已有文件直接读取，不覆盖用户配置。 */
 import { createDirectory, fileExists, readFile, writeFile } from "@/commands/fs"
+import knowledgeExtraction from "./ingest-prompts/01-04-知识单元与检索词提取规则.md?raw"
 import analysis from "./ingest-prompts/01-03-独立成页与名称复用规则.md?raw"
 import generation from "./ingest-prompts/02-02-独立页面写作规则.md?raw"
 import merge from "./ingest-prompts/04-02-页面内容合并规则.md?raw"
@@ -17,13 +18,14 @@ import acceptance from "./ingest-prompts/06-01-最终验收规则.md?raw"
 import acceptanceRepair from "./ingest-prompts/06-02-验收修复补录规则.md?raw"
 
 export const DEFAULT_INGEST_PROMPTS = {
-  analysis, generation, merge, classification, review,
+  analysis, knowledgeExtraction, generation, merge, classification, review,
   analysisTemplate, generationTemplate, chunkAnalysisTemplate, reviewTemplate,
   mergeTemplate, classificationTemplate, researchQuery, reviewRequest, acceptance, acceptanceRepair,
 }
 export type IngestPrompts = typeof DEFAULT_INGEST_PROMPTS
 /** 当前文件名与历史名称；始终优先使用当前名称，不混合配置。 */
 const PROMPT_FILES: Record<keyof IngestPrompts, { name: string; aliases: readonly string[] }> = {
+  knowledgeExtraction: { name: "01-04-知识单元与检索词提取规则.md", aliases: [] },
   analysisTemplate: { name: "01-01-来源文档分析.md", aliases: ["02-01-来源文档分析.md", "来源文档分析.md", "analysis-template.md"] },
   chunkAnalysisTemplate: { name: "01-02-长文分块分析.md", aliases: ["02-02-长文分块分析.md", "长文分块分析.md", "chunk-analysis-template.md"] },
   analysis: { name: "01-03-独立成页与名称复用规则.md", aliases: ["02-03-独立成页与名称复用规则.md", "独立成页与名称复用规则.md", "analysis.md"] },

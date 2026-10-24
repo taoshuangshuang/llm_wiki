@@ -1,0 +1,1 @@
+{"timeout_seconds": 240, "judge_timeout_seconds": 120, "check_command": ["python3", "scripts/check.py", "{input}", "{output}"]}

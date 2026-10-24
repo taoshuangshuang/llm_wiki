@@ -1,3 +1,4 @@
+import { parseFrontmatter } from "./frontmatter"
 import type { SourceWatchConfig } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
 import { clampUserConcurrency } from "@/lib/concurrency-limits"
@@ -81,6 +82,7 @@ export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> |
     excludeExtensions: normalizeExtensions(config?.excludeExtensions ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeExtensions),
     excludeDirs: normalizeList(config?.excludeDirs ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeDirs),
     excludeGlobs: normalizeList(config?.excludeGlobs ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeGlobs),
+    excludedTitleKeywords: normalizeList(config?.excludedTitleKeywords ?? []),
     maxFileSizeMb: Math.max(1, Math.min(4096, config?.maxFileSizeMb ?? DEFAULT_SOURCE_WATCH_CONFIG.maxFileSizeMb)),
   }
 }
@@ -130,4 +132,26 @@ export function isPathAllowedBySourceWatch(path: string, config: SourceWatchConf
     return false
   }
   return true
+}
+
+/** 只匹配文件名和文档主标题，不将目录、正文或子章节当作整篇资料的排除依据。 */
+export function excludedSourceTitleKeyword(path: string, content: string, keywords: readonly string[] = []): string | undefined {
+  const fileTitle = (normalizePath(path).split("/").pop() ?? "").replace(/\.[^.]+$/, "")
+  const { frontmatter, body } = parseFrontmatter(content.replace(/^\uFEFF/, ""))
+  const lines = body.split(/\r?\n/)
+  let fence: string | undefined
+  let title = ""
+  for (const line of lines) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (marker) {
+      if (!fence) fence = marker[1]
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = undefined
+      continue
+    }
+    if (fence) continue
+    const heading = line.match(/^ {0,3}#\s+(.+?)\s*#*\s*$/)
+    if (heading) { title = heading[1]; break }
+  }
+  const titles = [fileTitle, String(frontmatter?.title ?? ""), title].map((value) => value.normalize("NFKC").toLowerCase())
+  return keywords.map((word) => word.trim()).find((word) => word && titles.some((value) => value.includes(word.normalize("NFKC").toLowerCase())))
 }

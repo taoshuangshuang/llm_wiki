@@ -131,6 +131,8 @@ pub struct SourceWatchConfig {
     exclude_dirs: Vec<String>,
     #[serde(default = "default_source_watch_exclude_globs")]
     exclude_globs: Vec<String>,
+    #[serde(default)]
+    excluded_title_keywords: Vec<String>,
     #[serde(default = "default_source_watch_max_file_size_mb")]
     max_file_size_mb: u64,
 }
@@ -180,6 +182,7 @@ fn normalize_source_watch_config(config: Option<SourceWatchConfig>) -> SourceWat
     config.exclude_extensions = normalize_ext_list(config.exclude_extensions);
     config.exclude_dirs = normalize_string_list(config.exclude_dirs);
     config.exclude_globs = normalize_string_list(config.exclude_globs);
+    config.excluded_title_keywords = normalize_string_list(config.excluded_title_keywords);
     config.max_file_size_mb = config.max_file_size_mb.clamp(1, 4096);
     config
 }
@@ -1754,6 +1757,20 @@ mod tests {
         assert!(!should_watch_rel("raw/sources/download.crdownload", &rules));
         assert!(!should_watch_rel(".vscode/settings.json", &rules));
         assert!(!should_watch_rel("wiki/media/image.png", &rules));
+    }
+
+    #[test]
+    fn source_watch_config_preserves_title_exclusions() {
+        let config: SourceWatchConfig = serde_json::from_value(serde_json::json!({
+            "excludedTitleKeywords": ["周会", "压测", "绩效"]
+        })).unwrap();
+        let normalized = normalize_source_watch_config(Some(config));
+        let stored = serde_json::to_value(normalized).unwrap();
+        let keywords = stored["excludedTitleKeywords"].as_array().unwrap();
+        assert_eq!(keywords.len(), 3);
+        for keyword in ["周会", "压测", "绩效"] {
+            assert!(keywords.contains(&serde_json::json!(keyword)));
+        }
     }
 
     #[test]

@@ -1016,6 +1016,7 @@ async function runTask(
 
   try {
     let unchanged = false
+    let skipped = false
     const writtenFiles = await autoIngest(
       projectPath,
       fullSourcePath,
@@ -1023,7 +1024,7 @@ async function runTask(
       run.controller.signal,
       task.folderContext,
       trackWrittenFile,
-      { runCommit, onResult: (result) => { unchanged = result.outcome === "unchanged" } },
+      { runCommit, onResult: (result) => { unchanged = result.outcome === "unchanged"; skipped = result.outcome === "skipped" } },
     )
     if (currentProjectId !== projectId || run.epoch !== queueEpoch) return
     run.writtenFiles = writtenFiles
@@ -1036,12 +1037,14 @@ async function runTask(
       await saveQueue(projectPath)
       return
     }
-    if (writtenFiles.length === 0 && !unchanged) throw new Error("Ingest produced no output files")
+    if (writtenFiles.length === 0 && !unchanged && !skipped) throw new Error("Ingest produced no output files")
 
     cancelledInFlightTaskIds.delete(task.id)
     queue = queue.filter((candidate) => candidate.id !== task.id)
-    completedSinceIdle++
-    processedSinceDrain = true
+    if (!skipped) {
+      completedSinceIdle++
+      processedSinceDrain = true
+    }
     await saveQueue(projectPath)
     console.log(`[Ingest Queue] Done: ${task.sourcePath}`)
   } catch (err) {

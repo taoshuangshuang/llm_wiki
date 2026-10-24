@@ -16,7 +16,7 @@ interface Props {
 
 function updateListValue(value: string): string[] {
   return value
-    .split(/[,\n]/)
+    .split(/[,，、\n]/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
@@ -288,6 +288,19 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             {t("settings.sections.sourceWatch.exclusions", { defaultValue: "Exclusions and limits" })}
           </h3>
         </div>
+
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium">标题排除词</span>
+          <textarea defaultValue={(config.excludedTitleKeywords ?? []).join("\n")}
+            key={(config.excludedTitleKeywords ?? []).join("\0")}
+            onBlur={(event) => updateConfig({ excludedTitleKeywords: updateListValue(event.target.value) })}
+            placeholder="周会、压测、绩效（请用换行或逗号分隔）" disabled={!projectReady} rows={3}
+            className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm" />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            文件名或文档主标题包含任一排除词时跳过入库，保留原始文件；不匹配目录及正文。留空表示不排除。
+            知识单元与关键词提取规则可在项目 prompts/01-04-知识单元与检索词提取规则.md 中修改，下次入库生效。
+          </p>
+        </label>
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium">
