@@ -32,3 +32,9 @@ export function reviewFileChange(projectPath: string, proposalId: string, approv
 export function saveHumanFile(path: string, contents: string): Promise<void> {
   return invoke("save_human_file", { path, contents })
 }
+
+/** 移动草稿只绑定一个目标路径；界面必须展示为移动，不能用删除差异误导审批者。 */
+export function proposalMoveTarget(item: FileChangeProposal): string | null {
+  const prefix = "wiki.move_page:"
+  return item.proposed === null && item.source.startsWith(prefix) ? item.source.slice(prefix.length) : null
+}

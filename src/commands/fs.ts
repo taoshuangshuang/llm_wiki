@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core"
 import type { FileNode, WikiProject } from "@/types/wiki"
 import { ensureProjectId, upsertProjectInfo } from "@/lib/project-identity"
 import { isAbsolutePath } from "@/lib/path-utils"
+import type { ReviewItem } from "@/stores/review-store"
 
 /** Raw shape returned by the Rust commands — id is attached client-side. */
 interface RawProject {
@@ -24,6 +25,15 @@ export async function writeFile(path: string, contents: string): Promise<void> {
   return invoke<void>("write_file", { path, contents })
 }
 
+/** 过程日志使用专用追加命令，不读取重写整个文件，也不触发页面历史或审批。 */
+export async function appendIngestLog(projectPath: string, sourceIdentity: string, entry: unknown): Promise<void> {
+  return invoke("append_ingest_log", { projectPath, sourceIdentity, entry })
+}
+
+export async function readIngestLog(projectPath: string, sourceIdentity: string): Promise<string> {
+  return invoke("read_ingest_log", { projectPath, sourceIdentity })
+}
+
 export async function writeFileBase64(path: string, base64: string): Promise<void> {
   assertAbsoluteFsPath("writeFileBase64", path)
   return invoke<void>("write_file_base64", { path, base64 })
@@ -32,6 +42,16 @@ export async function writeFileBase64(path: string, base64: string): Promise<voi
 export async function writeFileAtomic(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFileAtomic", path)
   return invoke<void>("write_file_atomic", { path, contents })
+}
+
+/** 入库提交在后端短锁内核对预期正文；null 表示预期路径不存在。 */
+export async function compareAndWriteFile(projectPath: string, relativePath: string, expected: string | null, contents: string): Promise<void> {
+  return invoke<void>("compare_and_write_file", { projectPath, relativePath, expected, contents })
+}
+
+/** 与 HTTP/MCP 共用后端短锁，增量合并事项，避免旧 Store 覆盖人工状态。 */
+export async function mergeReviewItems(projectPath: string, items: ReviewItem[]): Promise<ReviewItem[]> {
+  return invoke<ReviewItem[]>("merge_review_items", { projectPath, items })
 }
 
 /**
@@ -284,4 +304,9 @@ export async function apiServerReloadConfig(): Promise<string> {
 
 export async function mcpServerEntryPath(): Promise<string> {
   return invoke<string>("mcp_server_entry_path")
+}
+
+/** 人工编辑项目规则，后端在提交锁内比较版本并保存人工历史。 */
+export async function saveWorkflowFile(projectPath: string, relativePath: string, expected: string | null, contents: string): Promise<void> {
+  await invoke("save_workflow_file", { projectPath, relativePath, expected, contents })
 }

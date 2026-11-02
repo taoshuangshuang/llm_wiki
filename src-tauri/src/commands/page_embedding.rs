@@ -185,7 +185,7 @@ pub async fn embed_wiki_page(
     })??;
     validate_embedding_rows(&rows)?;
 
-    vectorstore::vector_upsert_chunks_with_revision(project_path, &page_id, rows, &fingerprint)
+    vectorstore::vector_upsert_chunks_with_revision(project_path, &page_id, rows, &fingerprint, &content)
         .await
         .map_err(|err| PageEmbeddingError::new(PageEmbeddingErrorKind::Storage, err))?;
     remove_legacy_vector_id_if_safe(project_path, &page_id).await;
@@ -277,6 +277,21 @@ fn embedding_fingerprint(revision: &str, config: &SearchEmbeddingConfig) -> Stri
         "sha256:{:x}",
         Sha256::digest(signature.to_string().as_bytes())
     )
+}
+
+/// 设置页可以复用 HTTP/MCP 已提交的完整向量，避免两个入口交替重复计算。
+pub(crate) fn matching_current_backend_revision(
+    project_path: &str,
+    page_id: &str,
+    config: &SearchEmbeddingConfig,
+    fingerprint: &str,
+) -> Option<String> {
+    let Ok((path, _)) = resolve_wiki_markdown_path(project_path, &format!("wiki/{page_id}.md")) else {
+        return None;
+    };
+    let Ok(content) = fs::read_to_string(path) else { return None; };
+    let revision = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
+    (embedding_fingerprint(&revision, config) == fingerprint).then_some(revision)
 }
 
 fn vector_page_id(normalized_path: &str) -> Option<String> {
@@ -725,6 +740,31 @@ mod tests {
             max_chunk_chars: Some(1_000),
             overlap_chunk_chars: Some(200),
         }
+    }
+
+    /// 前端核对可复用后端单页索引；正文或模型配置改变后不能继续跳过。
+    #[tokio::test]
+    async fn backend_revision_can_be_reused_only_for_current_content_and_config() {
+        let root = project();
+        let pp = root.to_string_lossy().to_string();
+        let content = "# 页面\n\n正文";
+        fs::write(root.join("wiki/nested/page.md"), content).unwrap();
+        let config = embedding_config("test");
+        let revision = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
+        let fingerprint = embedding_fingerprint(&revision, &config);
+        vectorstore::vector_upsert_chunks_with_revision(&pp, "nested/page", vec![ChunkUpsertInput {
+            chunk_index: 0, chunk_text: content.to_string(), heading_path: "页面".into(), embedding: vec![0.1; 768],
+        }], &fingerprint, content).await.unwrap();
+        let pages = vectorstore::vector_indexed_pages(pp.clone(), Some(config.clone())).await.unwrap();
+        let json = serde_json::to_value(pages).unwrap();
+        assert_eq!(json[0]["backendRevision"], revision);
+        let changed_config = embedding_config("other");
+        let pages = vectorstore::vector_indexed_pages(pp.clone(), Some(changed_config)).await.unwrap();
+        assert!(serde_json::to_value(pages).unwrap()[0]["backendRevision"].is_null());
+        fs::write(root.join("wiki/nested/page.md"), "修改后的正文").unwrap();
+        let pages = vectorstore::vector_indexed_pages(pp, Some(config)).await.unwrap();
+        assert!(serde_json::to_value(pages).unwrap()[0]["backendRevision"].is_null());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

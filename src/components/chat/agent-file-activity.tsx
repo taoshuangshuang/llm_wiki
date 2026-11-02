@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, FilePlus2, FileText, RotateCcw } from "lucide-react"
+import { ChevronDown, ChevronRight, FilePlus2, FileText, FileX2, RotateCcw } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { deleteFile, readFile, writeFile } from "@/commands/fs"
 import type { ChatAgentFileChange } from "@/lib/chat-agent-types"
@@ -64,7 +64,9 @@ export function AgentFileActivity({
       <div>
         {groups.map((group) => {
           const fileExpanded = expandedFiles[group.path] ?? true
-          const FileIcon = group.edits[0]?.operation === "created" ? FilePlus2 : FileText
+          const deleted = group.edits[group.edits.length - 1]?.operation === "deleted"
+          const FileIcon = deleted ? FileX2
+            : group.edits[0]?.operation === "created" ? FilePlus2 : FileText
           return (
             <div key={group.path} className="border-b border-border/40 last:border-b-0">
               <div className="flex min-w-0 items-center gap-1.5 bg-muted/15 px-2 py-1.5 text-xs">
@@ -80,6 +82,7 @@ export function AgentFileActivity({
                 <FileIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <button
                   type="button"
+                  disabled={deleted}
                   onClick={() => {
                     void readFile(group.path)
                       .catch(() => "")
@@ -98,7 +101,7 @@ export function AgentFileActivity({
               </div>
               {fileExpanded && group.edits.map((change, editIndex) => {
                 const editExpanded = Boolean(expandedEdits[change.id])
-                const canUndo = change.beforeContent !== undefined
+                const canUndo = !deleted && change.beforeContent !== undefined
                   && change.afterContent !== undefined
                   && !undone.has(change.id)
                 return (

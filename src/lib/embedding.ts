@@ -181,10 +181,13 @@ async function vectorUpsertChunks(
   projectPath: string,
   pageId: string,
   chunks: ChunkUpsertInput[],
+  fingerprint?: string,
+  expectedContent?: string,
 ): Promise<void> {
-  await invoke("vector_upsert_chunks", {
+  await invoke(fingerprint ? "vector_upsert_indexed_chunks" : "vector_upsert_chunks", {
     projectPath: normalizePath(projectPath),
     pageId,
+    ...(fingerprint ? { fingerprint, expectedContent } : {}),
     chunks: chunks.map((c) => ({
       chunk_index: c.chunkIndex,
       chunk_text: c.chunkText,
@@ -268,8 +271,10 @@ async function vectorUpsertPageChunks(
   projectPath: string,
   pageId: string,
   rows: ChunkUpsertInput[],
+  fingerprint?: string,
+  expectedContent?: string,
 ): Promise<void> {
-  await vectorUpsertChunks(projectPath, pageId, rows)
+  await vectorUpsertChunks(projectPath, pageId, rows, fingerprint, expectedContent)
   await removeLegacyVectorIdIfSafe(projectPath, pageId)
 }
 
@@ -367,6 +372,41 @@ interface PreparedPageEmbedding {
   rows: ChunkUpsertInput[]
   chunkCount: number
   failedChunks: number
+  fingerprint?: string
+  content: string
+}
+
+/** 内容和影响向量语义的配置共同决定版本；密钥轮换和并发调整不触发重算。 */
+async function pageEmbeddingFingerprint(title: string, content: string, cfg: EmbeddingConfig): Promise<string> {
+  const configFingerprint = await embeddingConfigFingerprint(cfg)
+  return `${configFingerprint}:${await sha256(JSON.stringify({ title, content }))}`
+}
+
+/** 单独记录配置版本，模型切换时整体重建，避免同一表混用不同向量空间。 */
+async function embeddingConfigFingerprint(cfg: EmbeddingConfig): Promise<string> {
+  const signature = JSON.stringify({
+    // 切片改为原文连续范围；旧切片可能丢失空行，需在下次同步时重建。
+    pipeline: "wiki-ts-chunks-v2-source-spans",
+    endpoint: cfg.endpoint.trim(), model: cfg.model.trim(),
+    outputDimensionality: cfg.outputDimensionality ?? null,
+    maxChunkChars: cfg.maxChunkChars ?? 1000,
+    overlapChunkChars: cfg.overlapChunkChars ?? 200,
+    extraHeaders: Object.entries(cfg.extraHeaders ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+  })
+  return `ts-v1:${await sha256(signature)}`
+}
+
+/** 浏览器与后端共用的 UTF-8 SHA-256 表示，用于复核后端索引的正文版本。 */
+async function sha256(text: string): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))
+  return `sha256:${Array.from(new Uint8Array(hash), (value) => value.toString(16).padStart(2, "0")).join("")}`
+}
+
+interface IndexedPage {
+  pageId: string
+  fingerprint: string | null
+  chunks: number
+  backendRevision?: string | null
 }
 
 type PageEmbeddingPreparation =
@@ -436,6 +476,8 @@ async function preparePageEmbeddingRows(
       rows,
       chunkCount: chunks.length,
       failedChunks,
+      content,
+      fingerprint: failedChunks === 0 ? await pageEmbeddingFingerprint(title, content, cfg) : undefined,
     },
   }
 }
@@ -475,21 +517,30 @@ export async function embedPage(
   title: string,
   content: string,
   cfg: EmbeddingConfig,
-  options?: { deferOptimization?: boolean },
+  options?: {
+    deferOptimization?: boolean
+    /** 向量在锁外生成；由调用方在短提交内校验页面版本并写入，过期时返回 false。 */
+    commit?: (write: () => Promise<void>) => Promise<boolean>
+  },
 ): Promise<boolean> {
   const t0 = performance.now()
   const prepared = await preparePageEmbeddingRows(pageId, title, content, cfg)
 
-  if (prepared.status !== "ready") {
-    if (prepared.status === "failed") {
+  if (prepared.status !== "ready" || prepared.page.failedChunks > 0) {
+    if (prepared.status === "failed" || prepared.status === "ready") {
       console.log(
-        `[Embedding] Indexed nothing for "${pageId}" — no chunks could be embedded. See getLastEmbeddingError().`,
+        `[Embedding] Kept previous vectors for "${pageId}" — page embedding is incomplete. See getLastEmbeddingError().`,
       )
     }
     return false
   }
 
-  await vectorUpsertPageChunks(projectPath, pageId, prepared.page.rows)
+  const write = () => vectorUpsertPageChunks(projectPath, pageId, prepared.page.rows, prepared.page.fingerprint, content)
+  if (options?.commit) {
+    if (!await options.commit(write)) return false
+  } else {
+    await write()
+  }
   if (!options?.deferOptimization) {
     await noteIncrementalVectorWrite(projectPath)
   }
@@ -503,7 +554,7 @@ export async function embedPage(
 export type EmbeddingReindexState =
   | { kind: "idle" }
   | { kind: "running"; projectPath: string; done: number; total: number }
-  | { kind: "done"; projectPath: string; count: number }
+  | { kind: "done"; projectPath: string; count: number; removed?: number; skipped?: number }
   | { kind: "error"; projectPath: string; message: string }
 
 let embeddingReindexState: EmbeddingReindexState = { kind: "idle" }
@@ -572,11 +623,30 @@ async function preparePageEmbeddingRowsWithRetry(
 
 /**
  * Embed every wiki content page that isn't already indexed (or re-embed
- * all when `force === true`). Driven from Settings → Embedding or on
+ * all when `clearExisting === true`). Driven from Settings → Embedding or on
  * first enable. Skips structural pages (index / log / overview /
  * purpose / schema) — they're aggregate views, not retrieval targets.
  */
-export async function embedAllPages(
+export function embedAllPages(
+  projectPath: string,
+  cfg: EmbeddingConfig,
+  onProgress?: (done: number, total: number) => void,
+  options?: { clearExisting?: boolean },
+): Promise<number> {
+  // 设置页与后台核对共用项目队列，避免重建清表和增量写入互相覆盖。
+  const pp = normalizePath(projectPath)
+  const previous = embeddingSyncRuns.get(pp) ?? Promise.resolve(0)
+  const pending = previous.catch(() => 0).then(() => embedAllPagesInner(pp, cfg, onProgress, options))
+  embeddingSyncRuns.set(pp, pending)
+  void pending.finally(() => {
+    if (embeddingSyncRuns.get(pp) === pending) embeddingSyncRuns.delete(pp)
+  }).catch(() => {})
+  return pending
+}
+
+const embeddingSyncRuns = new Map<string, Promise<number>>()
+
+async function embedAllPagesInner(
   projectPath: string,
   cfg: EmbeddingConfig,
   onProgress?: (done: number, total: number) => void,
@@ -597,8 +667,17 @@ export async function embedAllPages(
       setEmbeddingReindexState({ kind: "error", projectPath: pp, message })
       throw new Error(message)
     }
-    setEmbeddingReindexState({ kind: "done", projectPath: pp, count: 0 })
-    return 0
+    try {
+      // 整个 wiki 目录被删除时也清理遗留向量；后端逐页复核路径和项目可达性。
+      const pages = await invoke<IndexedPage[]>("vector_indexed_pages", { projectPath: pp, cfg })
+      const removed = pages?.length
+        ? await invoke<number>("vector_prune_missing_pages", { projectPath: pp, pageIds: pages.map((page) => page.pageId) })
+        : 0
+      setEmbeddingReindexState({ kind: "done", projectPath: pp, count: 0, removed, skipped: 0 })
+      return 0
+    } catch (error) {
+      return throwEmbeddingReindexError(pp, error instanceof Error ? error.message : String(error))
+    }
   }
 
   const mdFiles: { id: string; path: string }[] = []
@@ -690,7 +769,7 @@ export async function embedAllPages(
       let updated = 0
       for (const page of preparedPages) {
         try {
-          await vectorUpsertPageChunks(pp, page.pageId, page.rows)
+          await vectorUpsertPageChunks(pp, page.pageId, page.rows, page.fingerprint, page.content)
           updated++
         } catch (err) {
           failures.push(
@@ -720,7 +799,7 @@ export async function embedAllPages(
     for (const page of preparedPages) {
       try {
         // The table was just cleared, so no legacy basename rows remain.
-        await vectorUpsertChunks(pp, page.pageId, page.rows)
+        await vectorUpsertChunks(pp, page.pageId, page.rows, page.fingerprint, page.content)
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         throwEmbeddingReindexError(
@@ -746,31 +825,85 @@ export async function embedAllPages(
     return written
   }
 
-  let done = 0
-  let indexed = 0
-  await parallelForEach(mdFiles, cfg.concurrency, async (file) => {
-    try {
-      const content = await readFile(file.path)
-      const title = extractEmbeddingTitle(content, file.id)
-      const prepared = await preparePageEmbeddingRows(file.id, title, content, cfg, scheduleEmbedding)
-      if (prepared.status === "ready") {
-        await scheduleVectorWrite(() => vectorUpsertPageChunks(pp, file.id, prepared.page.rows))
-        indexed++
+  // 先扫描内容指纹，只把实际变化和删除纳入进度总数。
+  try {
+    const pages = await invoke<IndexedPage[]>("vector_indexed_pages", { projectPath: pp, cfg })
+    const configFingerprint = await embeddingConfigFingerprint(cfg)
+    const configChanged = (pages ?? []).some((page) => page.fingerprint?.startsWith("ts-v1:")
+      && !page.fingerprint.startsWith(`${configFingerprint}:`))
+    const existing = new Map((pages ?? []).map((page) => [page.pageId, page]))
+    const currentIds = new Set(mdFiles.map((file) => file.id))
+    const deleted = [...existing.keys()].filter((id) => !currentIds.has(id))
+    const changes: Array<{ id: string; title: string; content: string }> = []
+    const failures: string[] = []
+    let skipped = 0
+    for (const file of mdFiles) {
+      try {
+        const reason = wikiPageIdError(file.id)
+        if (reason) throw new Error(reason)
+        const content = await readFile(file.path)
+        const title = extractEmbeddingTitle(content, file.id)
+        const fingerprint = await pageEmbeddingFingerprint(title, content, cfg)
+        const indexedPage = existing.get(file.id)
+        const backendMatches = indexedPage?.backendRevision
+          && indexedPage.backendRevision === await sha256(content)
+        if (indexedPage?.fingerprint === fingerprint || backendMatches) skipped++
+        else changes.push({ id: file.id, title, content })
+      } catch (error) {
+        failures.push(`${file.id}: ${error instanceof Error ? error.message : String(error)}`)
       }
-    } catch {
-      // skip — individual file failure doesn't halt the batch
     }
-    done++
-    setEmbeddingReindexState({ kind: "running", projectPath: pp, done, total: mdFiles.length })
-    if (onProgress) onProgress(done, mdFiles.length)
-  })
-
-  if (indexed > 0) {
-    await optimizeChunkVectorTableBestEffort(pp)
+    // 先识别删除和清空；没有可索引正文时直接清理，不能因配置变化陷入重建失败。
+    if (configChanged && changes.some((file) => chunkMarkdown(file.content, {
+      targetChars: cfg.maxChunkChars ?? 1000, overlapChars: cfg.overlapChunkChars ?? 200,
+    }).length > 0)) {
+      return await embedAllPagesInner(pp, cfg, onProgress, { clearExisting: true })
+    }
+    let done = 0
+    let indexed = 0
+    let removed = 0
+    const total = changes.length + deleted.length
+    const progress = () => {
+      setEmbeddingReindexState({ kind: "running", projectPath: pp, done, total })
+      if (onProgress) onProgress(done, total)
+    }
+    setEmbeddingReindexState({ kind: "running", projectPath: pp, done, total })
+    await parallelForEach(changes, cfg.concurrency, async (file) => {
+      try {
+        const prepared = await preparePageEmbeddingRows(file.id, file.title, file.content, cfg, scheduleEmbedding)
+        if (prepared.status === "empty") {
+          // 页面已清空，旧正文也应退出检索；空页面无需请求模型。
+          if (existing.has(file.id)) {
+            await scheduleVectorWrite(() => vectorDeletePage(pp, file.id))
+            removed++
+          }
+        } else if (prepared.status === "ready" && prepared.page.failedChunks === 0) {
+          await scheduleVectorWrite(() => vectorUpsertPageChunks(pp, file.id, prepared.page.rows, prepared.page.fingerprint, prepared.page.content))
+          indexed++
+        } else {
+          failures.push(`${file.id}: ${getLastEmbeddingError() || "some chunks failed to embed"}`)
+        }
+      } catch (error) {
+        failures.push(`${file.id}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      done++
+      progress()
+    })
+    if (deleted.length > 0) {
+      removed += await invoke<number>("vector_prune_missing_pages", { projectPath: pp, pageIds: deleted })
+      done += deleted.length
+      progress()
+    }
+    if (indexed > 0 || removed > 0) await optimizeChunkVectorTableBestEffort(pp)
+    if (failures.length > 0) {
+      throw new Error(`${failures.length} page(s) could not be synchronized (${failures[0]}). Failed pages kept their previous vectors; retry incremental sync after fixing the error.`)
+    }
+    setEmbeddingReindexState({ kind: "done", projectPath: pp, count: indexed, removed, skipped })
+    return indexed
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return throwEmbeddingReindexError(pp, message)
   }
-
-  setEmbeddingReindexState({ kind: "done", projectPath: pp, count: indexed })
-  return indexed
 }
 
 /**

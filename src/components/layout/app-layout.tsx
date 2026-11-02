@@ -6,8 +6,6 @@ import { UpdateBanner } from "./update-banner"
 import { SidebarPanel } from "./sidebar-panel"
 import { ContentArea } from "./content-area"
 import { WorkspaceRightPanel } from "./workspace-right-panel"
-import { ActivityPanel } from "./activity-panel"
-import { useResearchStore } from "@/stores/research-store"
 import { useReviewChatStore } from "@/stores/review-chat-store"
 import { useChatStore } from "@/stores/chat-store"
 import { normalizePath } from "@/lib/path-utils"
@@ -26,13 +24,13 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
-  const researchPanelOpen = useResearchStore((s) => s.panelOpen)
+  const previewReturnView = useWikiStore((s) => s.previewReturnView)
   const reviewSession = useReviewChatStore((s) => s.session)
   const conversations = useChatStore((s) => s.conversations)
   const reviewConversationId = reviewSession?.projectPath === normalizePath(project?.path ?? "")
     && conversations.some((conversation) => conversation.id === reviewSession.conversationId)
     ? reviewSession.conversationId : undefined
-  const [leftWidth, setLeftWidth] = useState(220)
+  const [leftWidth, setLeftWidth] = useState(260)
   const [rightWidth, setRightWidth] = useState(400)
   const [leftCollapsed, setLeftCollapsed] = useState(
     () => localStorage.getItem(LEFT_PANEL_COLLAPSED_KEY) === "true",
@@ -68,8 +66,8 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
 
         if (isDraggingLeft.current) {
           const newWidth = e.clientX - rect.left
-          // Hard cap: 150 to 400px
-          setLeftWidth(Math.max(150, Math.min(400, newWidth)))
+          // Hard cap: 150 to 480px
+          setLeftWidth(Math.max(150, Math.min(480, newWidth)))
         }
         if (isDraggingRight.current) {
           const newWidth = rect.right - e.clientX
@@ -95,9 +93,9 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   )
 
   // Settings and Chat are standalone views. Hide the project file tree,
-  // activity strip, and optional right research panel there so those
+  // activity strip, and optional right conversation panel there so those
   // screens use the whole work area.
-  const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen, Boolean(reviewConversationId))
+  const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, Boolean(reviewConversationId), previewReturnView)
   const toggleLeftPanel = () => {
     setLeftCollapsed((value) => {
       const next = !value
@@ -127,7 +125,6 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 <div className="flex-1 overflow-hidden">
                   <SidebarPanel onCollapse={toggleLeftPanel} />
                 </div>
-                <ActivityPanel />
               </div>
               <div
                 className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
@@ -157,19 +154,19 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
             </ErrorBoundary>
           </div>
 
-          {/* Right panels */}
-          {hasRightPanel && (
+          {/* Right panels：导航切换只隐藏，会话关闭或项目切换时才卸载并清理请求。 */}
+          {reviewConversationId && (
             <>
               <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                className={hasRightPanel ? "w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40" : "hidden"}
                 onMouseDown={startDrag("right")}
               />
               <div
-                className="flex shrink-0 flex-col overflow-hidden border-l"
+                className={hasRightPanel ? "flex shrink-0 flex-col overflow-hidden border-l" : "hidden"}
                 style={{ width: rightWidth }}
               >
                 <ErrorBoundary>
-                  <WorkspaceRightPanel conversationId={reviewConversationId} />
+                  <WorkspaceRightPanel conversationId={reviewConversationId} visible={hasRightPanel} />
                 </ErrorBoundary>
               </div>
             </>

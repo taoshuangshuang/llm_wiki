@@ -358,7 +358,10 @@ function normalizeBackendToolName(tool: string) {
   const normalized = tool.split(".").join("_")
   if (normalized === "wiki_search") return "wiki_search" as const
   if (normalized === "wiki_read_page") return "project_file_read" as const
-  if (normalized === "wiki_write_page") return "project_files" as const
+  if (normalized === "wiki_move_page" || normalized === "wiki_list_pages") return "project_files" as const
+  if (normalized === "source_read_file") return "project_file_read" as const
+  if (normalized === "wiki_delete_page") return "project_files" as const
+  if (normalized === "wiki_write_page" || normalized === "wiki_patch_page") return "project_files" as const
   if (normalized === "workspace_write_file") return "project_files" as const
   if (normalized === "workspace_append_file") return "project_files" as const
   if (normalized === "skills_load") return "project_file_read" as const
@@ -369,7 +372,6 @@ function normalizeBackendToolName(tool: string) {
   if (normalized === "web_search") return "web_search" as const
   if (normalized === "anytxt_search") return "anytxt_search" as const
   if (normalized === "shell_exec") return "shell_exec" as const
-  if (normalized === "deep_research_run") return "project_file_read" as const
   return "unknown_tool" as const
 }
 
@@ -926,6 +928,28 @@ export function ChatPanel({ compact = false }: { compact?: boolean }) {
                 }
                 return
               }
+              if (agentEvent.type === "fileDeleted" && project && agentEvent.path && agentEvent.tool) {
+                const filePath = projectAbsolutePath(project.path, agentEvent.path)
+                const editSequence = ++fileEditSequence
+                const editId = `${backendRunId}:${filePath}:${editSequence}`
+                fileEditOrder.set(editId, editSequence)
+                trackedFilePaths.add(filePath)
+                // 删除涉及整批引用清理，不能用单文件 Undo 留下不一致状态。
+                const change: ChatAgentFileChange = {
+                  id: editId, path: filePath, tool: agentEvent.tool, operation: "deleted",
+                  additions: 0, deletions: 0, diff: t("chat.agentChanges.deleted"), timestamp: Date.now(),
+                }
+                fileChanges.set(filePath, change)
+                fileEditChanges.push(change)
+                for (let index = references.length - 1; index >= 0; index--) {
+                  const reference = references[index]!
+                  if (projectAbsolutePath(project.path, reference.path) === filePath) {
+                    seenRefs.delete(`${reference.kind ?? "wiki"}:${reference.url ?? reference.path}`.toLowerCase())
+                    references.splice(index, 1)
+                  }
+                }
+                return
+              }
               if (agentEvent.type === "fileChanged" && project && agentEvent.path && agentEvent.tool) {
                 const filePath = projectAbsolutePath(project.path, agentEvent.path)
                 const editSequence = ++fileEditSequence
@@ -955,7 +979,8 @@ export function ChatPanel({ compact = false }: { compact?: boolean }) {
                     change.beforeContent = undefined
                     change.afterContent = undefined
                   }
-                  fileChanges.set(filePath, change)
+                  const latestEdit = fileChanges.get(filePath)
+                  if (!latestEdit || (fileEditOrder.get(latestEdit.id) ?? 0) < editSequence) fileChanges.set(filePath, change)
                   fileEditChanges.push(change)
                 })
                 fileActivityChains.set(filePath, task)
@@ -1046,6 +1071,13 @@ export function ChatPanel({ compact = false }: { compact?: boolean }) {
             })
             await streamDone
             await Promise.allSettled(fileActivityTasks)
+            if (project && fileChanges.size > 0) {
+              await refreshProjectFileTree(project.path, { projectId: project.id, bumpDataVersion: true })
+              const store = useWikiStore.getState()
+              if (store.project?.id === project.id && store.selectedFile && fileChanges.get(store.selectedFile)?.operation === "deleted") {
+                store.setSelectedFile(null)
+              }
+            }
             fileEditChanges.sort(
               (left, right) => (fileEditOrder.get(left.id) ?? 0) - (fileEditOrder.get(right.id) ?? 0),
             )

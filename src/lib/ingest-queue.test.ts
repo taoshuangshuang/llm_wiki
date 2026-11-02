@@ -125,6 +125,18 @@ beforeEach(async () => {
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
+  it("无正文来源从队列移除，不按零页失败重试，也不触发完成后的模型巡检", async () => {
+    mockAutoIngest.mockImplementation(async (_project, _source, _config, _signal, _folder, _onFile, options) => {
+      options?.onSourceSkipped?.({ reason: "empty", message: "来源内容为空或仅含空白字符" })
+      return []
+    })
+    await enqueueIngest(TEST_ID, "raw/sources/empty.md")
+    await waitFor(() => getQueue().length === 0)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    expect(getQueueSummary()).toMatchObject({ failed: 0, completed: 0 })
+    expect(mockSweep).not.toHaveBeenCalled()
+  })
+
   it("待审核修改保留任务和明确原因，不自动重试或重复调用模型", async () => {
     // 后端 Tauri 可能以字符串拒绝；等待人工决定不属于可自动修复的失败。
     mockAutoIngest.mockRejectedValue("FILE_APPROVAL_REQUIRED: important file changes are pending human review")
@@ -136,13 +148,13 @@ describe("ingest-queue — enqueue & basic processing", () => {
     expect(getQueue()[0].error).toContain("FILE_APPROVAL_REQUIRED:")
   })
 
-  it("clamps the configurable worker limit", () => {
+  it("旧并发设置不再改变串行执行数量", () => {
     setIngestWorkerLimit(0)
     expect(getIngestWorkerLimit()).toBe(1)
     setIngestWorkerLimit(99)
-    expect(getIngestWorkerLimit()).toBe(64)
+    expect(getIngestWorkerLimit()).toBe(1)
     setIngestWorkerLimit(2.9)
-    expect(getIngestWorkerLimit()).toBe(2)
+    expect(getIngestWorkerLimit()).toBe(1)
   })
 
   it("persists inactive-project tasks and starts them when that project opens", async () => {
@@ -295,38 +307,26 @@ describe("ingest-queue — enqueue & basic processing", () => {
   })
 })
 
-describe("ingest-queue — concurrent workers", () => {
-  it("fills the configured worker pool without exceeding its limit", async () => {
+describe("ingest-queue — 串行执行与取消", () => {
+  it("旧配置请求两个工作者时仍按文档逐个完成", async () => {
     setIngestWorkerLimit(2)
-    const runs = new Map<string, ReturnType<typeof createDeferred<string[]>>>()
-    mockAutoIngest.mockImplementation((_projectPath, sourcePath) => {
+    const runs: ReturnType<typeof createDeferred<string[]>>[] = []
+    mockAutoIngest.mockImplementation(() => {
       const deferred = createDeferred<string[]>()
-      runs.set(sourcePath, deferred)
+      runs.push(deferred)
       return deferred.promise
     })
-
-    await enqueueBatch(TEST_ID, [
-      { sourcePath: "a.md", folderContext: "" },
-      { sourcePath: "b.md", folderContext: "" },
-      { sourcePath: "c.md", folderContext: "" },
-    ])
-    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
-    expect(getQueueSummary()).toMatchObject({ processing: 2, pending: 1 })
-
-    const firstRun = [...runs.values()][0]
-    expect(firstRun).toBeDefined()
-    firstRun.resolve(["wiki/sources/a.md"])
-    await waitFor(() => mockAutoIngest.mock.calls.length === 3)
-    expect(getQueueSummary().processing).toBe(2)
-
-    for (const deferred of runs.values()) {
-      if (!deferred.settled) deferred.resolve(["wiki/sources/completed.md"])
+    await enqueueBatch(TEST_ID, ["a.md", "b.md", "c.md"].map((sourcePath) => ({ sourcePath, folderContext: "" })))
+    for (let index = 0; index < 3; index++) {
+      await waitFor(() => mockAutoIngest.mock.calls.length === index + 1)
+      expect(getQueueSummary()).toMatchObject({ processing: 1, pending: 2 - index })
+      runs[index].resolve([`wiki/concepts/page-${index}.md`])
     }
     await waitFor(() => getQueue().length === 0)
     expect(getQueueSummary()).toMatchObject({ completed: 3, processing: 0, pending: 0 })
   })
 
-  it("cancels one active worker without aborting its sibling", async () => {
+  it("取消当前来源后才启动下一来源，下一来源不继承取消信号", async () => {
     setIngestWorkerLimit(2)
     const signals = new Map<string, AbortSignal>()
     const runs = new Map<string, ReturnType<typeof createDeferred<string[]>>>()
@@ -342,11 +342,12 @@ describe("ingest-queue — concurrent workers", () => {
       { sourcePath: "a.md", folderContext: "" },
       { sourcePath: "b.md", folderContext: "" },
     ])
-    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
+    await waitFor(() => mockAutoIngest.mock.calls.length === 1)
     const firstTask = getQueue().find((task) => task.sourcePath === "a.md")
     expect(firstTask).toBeDefined()
     await cancelTask(firstTask?.id ?? "")
 
+    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
     expect(signals.get(`${TEST_PATH}/a.md`)?.aborted).toBe(true)
     expect(signals.get(`${TEST_PATH}/b.md`)?.aborted).toBe(false)
     const siblingRun = [...runs.entries()].find(([path]) => path.endsWith("/b.md"))?.[1]
@@ -413,7 +414,7 @@ describe("ingest-queue — concurrent workers", () => {
     expect(mockAutoIngest).toHaveBeenCalledTimes(1)
   })
 
-  it("pauses and aborts every active worker after a provider usage limit", async () => {
+  it("当前来源触及用量限制后暂停，下一来源尚未启动", async () => {
     setIngestWorkerLimit(2)
     const signals: AbortSignal[] = []
     const firstRun = createDeferred<string[]>()
@@ -433,11 +434,12 @@ describe("ingest-queue — concurrent workers", () => {
       { sourcePath: "limited.md", folderContext: "" },
       { sourcePath: "sibling.md", folderContext: "" },
     ])
-    await waitFor(() => signals.length === 2)
+    await waitFor(() => signals.length === 1)
     firstRun.reject(new Error("429 usage limit exceeded"))
     await waitFor(() => getQueueSummary().processing === 0)
 
-    expect(signals[1].aborted).toBe(true)
+    expect(signals).toHaveLength(1)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
     expect(isQueuePaused()).toBe(true)
     expect(getQueue().map((task) => task.status)).toEqual(["pending", "pending"])
     expect(getQueue().every((task) => task.retryCount === 0)).toBe(true)
@@ -445,30 +447,29 @@ describe("ingest-queue — concurrent workers", () => {
 })
 
 describe("ingest-queue — retry & failure", () => {
-  it("retries a failing task up to MAX_RETRIES=3 then marks failed", async () => {
+  it("首次失败后只重新入库一次，再次失败即保留为 failed", async () => {
     mockAutoIngest.mockRejectedValue(new Error("LLM error"))
 
     await enqueueIngest(TEST_ID, "bad.md")
     await flushMicrotasks(30)
 
-    expect(mockAutoIngest).toHaveBeenCalledTimes(3)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
     const queue = getQueue()
     expect(queue).toHaveLength(1)
     expect(queue[0].status).toBe("failed")
     expect(queue[0].error).toContain("LLM error")
-    expect(queue[0].retryCount).toBe(3)
+    expect(queue[0].retryCount).toBe(2)
   })
 
   it("succeeds on retry after transient failure", async () => {
     mockAutoIngest
-      .mockRejectedValueOnce(new Error("transient"))
       .mockRejectedValueOnce(new Error("transient"))
       .mockResolvedValueOnce(["wiki/sources/foo.md"])
 
     await enqueueIngest(TEST_ID, "flaky.md")
     await flushMicrotasks(30)
 
-    expect(mockAutoIngest).toHaveBeenCalledTimes(3)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
     expect(getQueue()).toHaveLength(0)
   })
 
@@ -483,13 +484,13 @@ describe("ingest-queue — retry & failure", () => {
     await enqueueIngest(TEST_ID, "refresh-abort.md")
     await flushMicrotasks(30)
 
-    // Three retries were attempted — the task didn't just vanish.
-    expect(mockAutoIngest).toHaveBeenCalledTimes(3)
+    // 首次执行加一次重试，失败任务继续保留，不能被当成成功移除。
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
     const queue = getQueue()
     expect(queue).toHaveLength(1)
     expect(queue[0].status).toBe("failed")
     expect(queue[0].error).toContain("no output files")
-    expect(queue[0].retryCount).toBe(3)
+    expect(queue[0].retryCount).toBe(2)
   })
 
   it("retryTask resets a failed task to pending and reprocesses it", async () => {
@@ -500,7 +501,7 @@ describe("ingest-queue — retry & failure", () => {
     expect(getQueue()[0].status).toBe("failed")
 
     const taskId = getQueue()[0].id
-    expect(getQueue()[0].retryCount).toBe(3)
+    expect(getQueue()[0].retryCount).toBe(2)
     mockAutoIngest.mockResolvedValueOnce(["wiki/sources/foo.md"])
     await retryTask(taskId)
     await flushMicrotasks(10)

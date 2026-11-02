@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import {
-  FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, TrendingUp, Target, ChevronRight, ChevronDown, Layout, Globe, Trash2,
+  BookOpen, ChevronRight, ChevronDown, Globe, Trash2,
 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
+import { getWikiTypeStyle, FALLBACK_TYPE_STYLE } from "@/lib/wiki-type-style"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { useTranslation } from "react-i18next"
@@ -17,6 +18,8 @@ import { useAppDialog } from "@/stores/app-dialog-store"
 import { parseSources } from "@/lib/sources-merge"
 import { filterPagesBySource, listPageSourceIdentities } from "@/lib/knowledge-source-filter"
 import { flattenFilesNaturally } from "@/lib/file-tree-order"
+import { loadProjectSchema } from "@/lib/project-schema"
+import { parseWikiSchemaRouting } from "@/lib/wiki-schema"
 
 interface WikiPageInfo {
   path: string
@@ -27,21 +30,18 @@ interface WikiPageInfo {
   sources: string[]
 }
 
-const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color: string; order: number }> = {
-  overview:    { icon: Layout,      label: "Overview",     color: "text-yellow-500", order: 0 },
-  entity:      { icon: Users,       label: "Entities",     color: "text-blue-500",   order: 1 },
-  concept:     { icon: Lightbulb,   label: "Concepts",     color: "text-purple-500", order: 2 },
-  source:      { icon: BookOpen,    label: "Sources",      color: "text-orange-500", order: 3 },
-  synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 4 },
-  finding:     { icon: TrendingUp,  label: "Findings",     color: "text-purple-500", order: 5 },
-  thesis:      { icon: Target,      label: "Theses",       color: "text-rose-500",   order: 6 },
-  methodology: { icon: BookOpen,    label: "Methodologies",color: "text-teal-500",   order: 7 },
-  comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 8 },
-  query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 9 },
-}
+// 保留内置类型的排序；项目扩展类型沿用原有末尾分组行为。
+const TYPE_ORDER = ["overview", "entity", "concept", "source", "synthesis", "finding", "thesis", "methodology", "comparison", "query"]
 
-function typeConfig(type: string): { icon: typeof FileText; label: string; color: string; order: number } {
-  return TYPE_CONFIG[type] ?? { icon: FileText, label: wikiTypeLabel(type), color: "text-muted-foreground", order: 99 }
+function typeConfig(type: string) {
+  const style = getWikiTypeStyle(type)
+  const order = TYPE_ORDER.indexOf(type)
+  return {
+    icon: style.icon,
+    label: style === FALLBACK_TYPE_STYLE ? wikiTypeLabel(type) : style.label,
+    color: style.iconClass,
+    order: order < 0 ? 99 : order,
+  }
 }
 
 export function KnowledgeTree() {
@@ -53,8 +53,9 @@ export function KnowledgeTree() {
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
+  const [typeOrder, setTypeOrder] = useState<string[]>([])
   const [selectedSource, setSelectedSource] = useState<string | null>(null)
-  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set())
   // Two-stage delete: first click arms the row, second click executes.
   // Only one row armed at a time (clicking another row replaces).
   const [armedPath, setArmedPath] = useState<string | null>(null)
@@ -64,7 +65,11 @@ export function KnowledgeTree() {
     if (!project) return
     const pp = normalizePath(project.path)
     try {
-      const wikiTree = await listDirectory(`${pp}/wiki`)
+      const [wikiTree, schema] = await Promise.all([
+        listDirectory(`${pp}/wiki`),
+        loadProjectSchema(pp, "analysis").catch(() => ""),
+      ])
+      setTypeOrder(Object.keys(parseWikiSchemaRouting(schema).typeDirs))
       const mdFiles = flattenMdFiles(wikiTree)
 
       const pageInfos: WikiPageInfo[] = []
@@ -88,6 +93,7 @@ export function KnowledgeTree() {
 
       setPages(pageInfos)
     } catch {
+      setTypeOrder([])
       setPages([])
     }
   }, [project])
@@ -125,7 +131,8 @@ export function KnowledgeTree() {
       setDeletingPath(pagePath)
       try {
         const pp = normalizePath(project.path)
-        await cascadeDeleteWikiPagesWithRefs(pp, [pagePath])
+        const result = await cascadeDeleteWikiPagesWithRefs(pp, [pagePath])
+        if (result.warnings.length > 0) await appDialog.alert({ message: result.warnings.join("\n") })
         // Refresh: page list, file tree, any data-version subscribers.
         await loadPages()
         try {
@@ -163,10 +170,17 @@ export function KnowledgeTree() {
     grouped.set(page.type, list)
   }
 
+  // 项目声明的类型顺序优先；未声明类型排末尾，无配置时沿用内置顺序。
+  function groupOrder(type: string): number {
+    if (!typeOrder.length) return typeConfig(type).order
+    const index = typeOrder.indexOf(type)
+    return index < 0 ? typeOrder.length : index
+  }
+
   // Sort groups by configured order
   const sortedGroups = [...grouped.entries()].sort((a, b) => {
-    const orderA = typeConfig(a[0]).order
-    const orderB = typeConfig(b[0]).order
+    const orderA = groupOrder(a[0])
+    const orderB = groupOrder(b[0])
     if (orderA === orderB) return wikiTypeLabel(a[0]).localeCompare(wikiTypeLabel(b[0]))
     return orderA - orderB
   })
@@ -257,6 +271,7 @@ export function KnowledgeTree() {
                           }`}
                           title={page.path}
                         >
+                          <Icon aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 ${config.color}`} />
                           {page.origin === "web-clip" && <Globe className="h-3 w-3 shrink-0 text-blue-400" />}
                           <span className="truncate">{page.title}</span>
                         </button>

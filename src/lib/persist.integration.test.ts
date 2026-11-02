@@ -87,8 +87,8 @@ describe("review persistence — round-trip", () => {
     await saveReviewItems(tmp.path, items)
     const loaded = await loadReviewItems(tmp.path)
     expect(loaded).toEqual([
-      { ...items[0], id: reviewIdFor(items[0]) },
-      { ...items[1], id: reviewIdFor(items[1]) },
+      { ...items[0], id: reviewIdFor(items[0]), legacyIds: [items[0].id] },
+      { ...items[1], id: reviewIdFor(items[1]), legacyIds: [items[1].id] },
     ])
   })
 
@@ -142,12 +142,11 @@ describe("review persistence — round-trip", () => {
     expect(loaded[0].affectedPages).toEqual(expect.arrayContaining(["a.md", "b.md"]))
   })
 
-  it("overwrites existing file on subsequent saves", async () => {
+  it("增量保存保留其他写入者的事项", async () => {
     await saveReviewItems(tmp.path, [makeReview({ id: "r-1", title: "Old" })])
     await saveReviewItems(tmp.path, [makeReview({ id: "r-2", title: "New" })])
     const loaded = await loadReviewItems(tmp.path)
-    expect(loaded).toHaveLength(1)
-    expect(loaded[0].title).toBe("New")
+    expect(loaded.map((item) => item.title)).toEqual(["Old", "New"])
   })
 
   it("normalizes Windows-style paths (backslashes) in projectPath", async () => {
@@ -207,7 +206,7 @@ describe("lint persistence — round-trip", () => {
     expect(loaded[0].affectedPages).toEqual(["a.md", "b.md"])
   })
 
-  it("overwrites existing file on subsequent saves", async () => {
+  it("增量保存保留其他写入者的事项", async () => {
     await saveLintItems(tmp.path, [makeLint({ id: "lint-old", page: "old.md" })])
     await saveLintItems(tmp.path, [makeLint({ id: "lint-new", page: "new.md" })])
     const loaded = await loadLintItems(tmp.path)

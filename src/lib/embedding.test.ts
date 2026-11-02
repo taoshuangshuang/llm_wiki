@@ -1241,6 +1241,31 @@ describe("fetchEmbedding (via searchByEmbedding) — auto-halve", () => {
 // ── embedPage — replaces page's chunks in LanceDB ──────────────────
 
 describe("embedPage", () => {
+  it("页面版本过期时丢弃已生成向量，不覆盖现有索引", async () => {
+    mockHttpFetch.mockImplementation(async () => okResponse([0.1, 0.2, 0.3]))
+    // 调用方已在提交前检测到页面变化；向量准备可以完成，但不能写入 LanceDB。
+    const result = await embedPage("/tmp/p", "shared", "Shared", "Old page body.", cfg, {
+      commit: async () => false,
+    })
+    expect(result).toBe(false)
+    expect(mockEmbeddingFetchInvoke).toHaveBeenCalledOnce()
+    expect(mockInvoke).not.toHaveBeenCalled()
+  })
+
+  it("向量准备完成后通过调用方的版本校验提交", async () => {
+    mockHttpFetch.mockImplementation(async () => okResponse([0.1, 0.2, 0.3]))
+    const result = await embedPage("/tmp/p", "shared", "Shared", "Current page body.", cfg, {
+      commit: async (write) => {
+        expect(mockEmbeddingFetchInvoke).toHaveBeenCalledOnce()
+        expect(mockInvoke).not.toHaveBeenCalled()
+        await write()
+        return true
+      },
+    })
+    expect(result).toBe(true)
+    expect(mockInvoke).toHaveBeenCalledWith("vector_upsert_indexed_chunks", expect.objectContaining({ pageId: "shared" }))
+  })
+
   it("chunks the page, embeds each, and upserts", async () => {
     // Fresh Response per call — Response body streams can't be
     // double-consumed.
@@ -1257,7 +1282,7 @@ describe("embedPage", () => {
 
     expect(mockInvoke).toHaveBeenCalledTimes(1)
     const [cmd, args] = mockInvoke.mock.calls[0]
-    expect(cmd).toBe("vector_upsert_chunks")
+    expect(cmd).toBe("vector_upsert_indexed_chunks")
     // TS→Rust conversion happens at the Tauri boundary — from the TS
     // side the arg object keeps its camelCase keys.
     const payload = args as {
@@ -1287,7 +1312,7 @@ describe("embedPage", () => {
     }
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(20)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(20)
     expect(commands.filter((command) => command === "vector_optimize_chunks")).toHaveLength(1)
     expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
   })
@@ -1300,7 +1325,7 @@ describe("embedPage", () => {
     }
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(19)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(19)
     expect(commands).not.toContain("vector_optimize_chunks")
   })
 
@@ -1313,16 +1338,17 @@ describe("embedPage", () => {
     await embedPage("/tmp/project-b", "page-b", "Page B", "body text", cfg)
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(20)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(20)
     expect(commands).not.toContain("vector_optimize_chunks")
   })
 
-  it("keeps successful chunks even when some fail, preserving original chunk_index gaps", async () => {
+  it("preserves the previous page index when any chunk fails", async () => {
     // Two 1100-char paragraphs under default opts produce exactly 3
     // chunks after packing + merging + overlap. Fail the middle embed
     // (call index 1) — upsert must receive 2 rows at indexes 0 and 2,
     // proving the failed chunk's index is preserved (NOT backfilled
     // to [0, 1]) so a re-embed later can update the gap directly.
+    // 新契约：单个分块失败时整页不提交，下一轮会重新生成完整页面。
     const para = "a".repeat(1100)
     const content = `${para}\n\n${para}`
     let call = 0
@@ -1336,13 +1362,9 @@ describe("embedPage", () => {
 
     await embedPage("/tmp/p", "page", "Page", content, cfg)
 
-    // Exactly 3 embed attempts (one per chunk), 2 successes, 1 upsert.
+    // 页面替换以完整成功为边界，不能用残缺分块覆盖之前可用的向量。
     expect(mockHttpFetch).toHaveBeenCalledTimes(3)
-    expect(mockInvoke).toHaveBeenCalledTimes(1)
-    const payload = mockInvoke.mock.calls[0][1] as {
-      chunks: Array<{ chunk_index: number }>
-    }
-    expect(payload.chunks.map((c) => c.chunk_index)).toEqual([0, 2])
+    expect(mockInvoke).not.toHaveBeenCalled()
   })
 
   it("skips LanceDB call when all chunks fail to embed", async () => {
@@ -1567,7 +1589,7 @@ describe("embedAllPages", () => {
     })).resolves.toBe(true)
     expect(batchCalls.length).toBeGreaterThan(0)
     expect(batchCalls.every((call) => call.texts.length <= 4)).toBe(true)
-    const upsert = mockInvoke.mock.calls.find((call) => call[0] === "vector_upsert_chunks")
+    const upsert = mockInvoke.mock.calls.find((call) => call[0] === "vector_upsert_indexed_chunks")
     const chunks = (upsert?.[1] as { chunks: Array<{ chunk_index: number }> }).chunks
     expect(chunks.map((chunk) => chunk.chunk_index)).toEqual(
       [...chunks].map((chunk) => chunk.chunk_index).sort((a, b) => a - b),
@@ -1611,7 +1633,7 @@ describe("embedAllPages", () => {
     // 2 upsert invokes, one per indexed page — other commands may
     // appear if the production code adds helpers later, but this
     // filter pins the exact pageIds.
-    const upsertCalls = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_chunks")
+    const upsertCalls = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_indexed_chunks")
     expect(upsertCalls).toHaveLength(2)
     const pageIds = upsertCalls.map((c) => (c[1] as { pageId: string }).pageId).sort()
     expect(pageIds).toEqual(["rope", "sub/attention"])
@@ -1649,7 +1671,7 @@ describe("embedAllPages", () => {
     expect(count).toBe(2)
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
-    expect(commands.filter((cmd) => cmd === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands.filter((cmd) => cmd === "vector_upsert_indexed_chunks")).toHaveLength(2)
   })
 
   it("does not clear the chunk table during ordinary embedAllPages runs", async () => {
@@ -1671,7 +1693,7 @@ describe("embedAllPages", () => {
     await embedAllPages("/proj", cfg)
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(2)
     expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
     expect(commands).not.toContain("vector_drop_legacy")
   })
@@ -1685,9 +1707,9 @@ describe("embedAllPages", () => {
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(2)
     expect(commands).toContain("vector_optimize_chunks")
-    expect(commands.indexOf("vector_optimize_chunks")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
+    expect(commands.indexOf("vector_optimize_chunks")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_indexed_chunks"))
     expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.indexOf("vector_optimize_chunks"))
   })
 
@@ -1744,7 +1766,7 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands).toContain("vector_clear_chunks")
     expect(commands).toContain("vector_drop_legacy")
-    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
+    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_indexed_chunks"))
   })
 
   it("does not fail a successful forced rebuild when legacy table cleanup fails", async () => {
@@ -1792,7 +1814,7 @@ describe("embedAllPages", () => {
     expect(message).not.toContain("Re-index failed: Re-index failed")
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
-    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_upsert_indexed_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
@@ -1809,7 +1831,7 @@ describe("embedAllPages", () => {
     )).rejects.toThrow("2 of 2 pages could not be embedded")
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
-    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_indexed_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
@@ -1834,10 +1856,10 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
     expect(commands).toContain("vector_drop_legacy")
-    const upserts = mockInvoke.mock.calls.filter((call) => call[0] === "vector_upsert_chunks")
+    const upserts = mockInvoke.mock.calls.filter((call) => call[0] === "vector_upsert_indexed_chunks")
     expect(upserts).toHaveLength(1)
     expect((upserts[0][1] as { pageId: string }).pageId).toBe("body")
-    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
+    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_indexed_chunks"))
   })
 
   it("does not clear existing chunks when a forced rebuild page only embeds partially", async () => {
@@ -1866,7 +1888,7 @@ describe("embedAllPages", () => {
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands).not.toContain("vector_clear_chunks")
-    expect(commands).not.toContain("vector_upsert_chunks")
+    expect(commands).not.toContain("vector_upsert_indexed_chunks")
     expect(commands).not.toContain("vector_drop_legacy")
   })
 
@@ -1879,7 +1901,7 @@ describe("embedAllPages", () => {
     mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
     let upsertCount = 0
     mockInvoke.mockImplementation(async (command) => {
-      if (command === "vector_upsert_chunks") {
+      if (command === "vector_upsert_indexed_chunks") {
         upsertCount++
         if (upsertCount === 2) throw new Error("lancedb write failed")
       }
@@ -1895,7 +1917,7 @@ describe("embedAllPages", () => {
 
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
-    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands.filter((command) => command === "vector_upsert_indexed_chunks")).toHaveLength(2)
     expect(commands).not.toContain("vector_drop_legacy")
   })
 
@@ -2040,9 +2062,8 @@ describe("embedAllPages", () => {
       .mockResolvedValueOnce("body for b")
     mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
 
-    const count = await embedAllPages("/proj", cfg)
-    expect(count).toBe(1)
-    const upserts = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_chunks")
+    await expect(embedAllPages("/proj", cfg)).rejects.toThrow("permission denied")
+    const upserts = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_indexed_chunks")
     expect(upserts).toHaveLength(1)
     expect((upserts[0][1] as { pageId: string }).pageId).toBe("b")
   })

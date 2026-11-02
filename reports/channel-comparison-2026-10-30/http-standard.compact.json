@@ -1,0 +1,54 @@
+{
+  "message": {
+    "content": "根据知识库检索到的内容，imeta（iMeta）是元数据平台中的核心元数据组件/引擎，主要定位与能力如下：\n\n1. **模块定位**：imeta 与「元数据、元数据服务、特征、元数据SDK」并列为元数据体系的高频问题模块（见 wiki/faqs/元数据相关问题排查指引.md），平台中元数据、特征、MDD/YPD 开发框架的大量查询与存储能力都构建在它之上。\n\n2. **查询能力（当前版本的主要证据）**：imeta 提供以 QuerySchema 为核心的查询 API，负责把 QuerySchema 解析并转成 SQL、执行后取回实体（流程见 wiki/designs/imeta QuerySchema转SQL与实体获取流程.md，API 主题页见 wiki/topics/QuerySchema（imeta 查询 API）.md）。它通过 Spring Boot 自动配置完成查询仓装配与 QueryConfiguration 构建（wiki/designs/imeta Spring 装配与查询核心生命周期.md），并提供查询仓路由、执行参数、SQL 构建与函数扩展等配置项（wiki/constraints/imeta 查询配置参数与能力边界.md）。\n\n3. **与开发框架的关系**：MDD 与 YPD 两个开发框架复用 imeta 查询链路的方式不同——YPD 将 QuerySchema 查询完整交给 imeta 执行；MDD 仅借用 QuerySqlBuilder 生成 QuerySqlStruct，SQL 执行与结果处理由 MDD 自行接管（wiki/concepts/MDD 与 YPD 调用 imeta 查询的入口与职责边界.md）。\n\n4. **历史组件结构（证据边界：旧版资料）**：2016-2017 旧版资料中 imeta 组件分为 core（元数据结构）、io（元数据加载/保存/模型转换）、orm（数据库增删改查与查询解析）、biz（业务基类与校验）、tpl（代码/文档/测试生成）、Spring 集成六部分（wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md）。注意该描述属历史版本资料，当前版本的组件结构未在本次检索中直接确认。\n\n**证据不足说明**：知识库中未检索到一篇当前版本的「imeta 模块总览」页面对其给出权威的现版定义；以上结论综合自查询链路、约束、FAQ 及历史资料页。如需权威定义，建议补充 imeta 模块的官方说明文档入库。",
+    "role": "assistant"
+  },
+  "references": [
+    {
+      "title": "imeta 升级与二开适配限制",
+      "path": "wiki/constraints/imeta升级与二开适配限制.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "KKZC-73200：R6 升级 V5 后 imeta 查询仓配置报错 RoleA of composition",
+      "path": "wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "MDD 与 YPD 调用 imeta 查询的入口与职责边界",
+      "path": "wiki/concepts/MDD 与 YPD 调用 imeta 查询的入口与职责边界.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "imeta 查询配置参数与能力边界",
+      "path": "wiki/constraints/imeta 查询配置参数与能力边界.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "IMetadataCustomerDocRpcService 自定义档案元数据RPC接口",
+      "path": "wiki/interfaces/IMetadataCustomerDocRpcService-自定义档案元数据RPC接口.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "营销云领域元数据体系总览（2016-2017 旧版）",
+      "path": "wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据相关问题排查指引",
+      "path": "wiki/faqs/元数据相关问题排查指引.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据组件（Meta Component）",
+      "path": "wiki/topics/元数据组件（Meta Component）.md",
+      "kind": "wiki"
+    }
+  ],
+  "usage": {
+    "completionChars": 2196,
+    "promptChars": 51796,
+    "referenceCount": 8,
+    "toolEventCount": 14
+  }
+}

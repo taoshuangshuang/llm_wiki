@@ -1,0 +1,391 @@
+{
+  "验证说明": "4 个真实模型复核用例，以及 1 次真实任务快照的完整审阅回放；均在临时项目执行。",
+  "results": [
+    {
+      "id": "original-table-conflict",
+      "model": "GLM-5.3-Flash",
+      "verdict": {
+        "sameSubject": true,
+        "sameVersion": true,
+        "sameConditions": true,
+        "incompatible": true,
+        "explainedDifference": false
+      },
+      "inputs": [
+        {
+          "attempt": 1,
+          "input": {
+            "issue": {
+              "title": "因素2（实体表版本）水平数量同页表述不一致",
+              "description": "同一页面因素·水平表与用例表实际出现三组实体表版本（mdd_table_version_4/ypd_table_version_2、mdd_table_version_5/ypd_table_version_3、其他tableVersion），但实验设计说明仅认定特定版本为一组、按 2 水平计算组合数，两处主张不相容，需人工确认实际水平数及组合数算式。",
+              "risk": "正交用例覆盖与理论组合数计算依据错误，可能导致测试覆盖缺口"
+            },
+            "evidence": [
+              {
+                "id": "after-1",
+                "path": "wiki/implementations/宽表动态分配单元测试设计.md",
+                "revision": "sha256:64ca7e49b058e25791c2b99c4762238a8940d7dd777afb1c1a707422dd66fcde",
+                "startLine": 80,
+                "endLine": 80,
+                "snapshot": {
+                  "runId": "958366d1-bbd3-46fd-aab5-8f5e71ea940a",
+                  "side": "after"
+                },
+                "quote": "- 因素2：2个水平"
+              },
+              {
+                "id": "after-1",
+                "path": "wiki/implementations/宽表动态分配单元测试设计.md",
+                "revision": "sha256:64ca7e49b058e25791c2b99c4762238a8940d7dd777afb1c1a707422dd66fcde",
+                "startLine": 63,
+                "endLine": 63,
+                "snapshot": {
+                  "runId": "958366d1-bbd3-46fd-aab5-8f5e71ea940a",
+                  "side": "after"
+                },
+                "quote": "特定版本：mdd_table_version_4 和 ypd_table_version_2"
+              },
+              {
+                "id": "after-1",
+                "path": "wiki/implementations/宽表动态分配单元测试设计.md",
+                "revision": "sha256:64ca7e49b058e25791c2b99c4762238a8940d7dd777afb1c1a707422dd66fcde",
+                "startLine": 20,
+                "endLine": 20,
+                "snapshot": {
+                  "runId": "958366d1-bbd3-46fd-aab5-8f5e71ea940a",
+                  "side": "after"
+                },
+                "quote": "| 水平3：普通实体 | 水平2：mdd_table_version_5, ypd_table_version_3 | 水平3：position | - | - |"
+              }
+            ],
+            "materials": [
+              {
+                "id": "after-1",
+                "path": "wiki/implementations/宽表动态分配单元测试设计.md",
+                "revision": "sha256:64ca7e49b058e25791c2b99c4762238a8940d7dd777afb1c1a707422dd66fcde",
+                "text": "---\ntype: implementation\ntitle: 宽表动态分配单元测试设计\ncreated: 2026-10-28\nupdated: 2026-10-28\nrelated: [元数据属性宽表动态分配]\nsources: [\"iuapdocs/12-设计方案/01-元数据设计器/动态分配/动态分配.md\"]\ntags: [\"宽表\", \"动态分配\", \"正交测试\", \"module/metadata-special\"]\n---\n# 宽表动态分配单元测试设计\n\n本页说明元数据属性宽表动态分配功能的测试设计：测试维度（因素·水平）、因素生效条件、组合数量计算及正交用例集。功能整体定义与分配流程见 [[元数据属性宽表动态分配]]。\n\n## 因素·水平\n\n| 因素1：实体类型 | 因素2：实体表版本 | 因素3：属性类型 | 因素4：引用类型 | 因素5：多语存储类型 |\n|----------------|------------------|----------------|----------------|-------------------|\n| 水平1：多选引用实体 | 水平1：mdd_table_version_4, ypd_table_version_2 | 水平1：text | 水平1：integer | 水平1：row |\n| 水平2：扩展实体 | 水平2：其他tableVersion | 水平2：link | 水平2：string | 水平2：column |\n| 水平3：普通实体 | 水平2：mdd_table_version_5, ypd_table_version_3 | 水平3：position | - | - |\n| - | - | 水平4：date | - | - |\n| - | - | 水平5：time | - | - |\n| - | - | 水平6：dateTime | - | - |\n| - | - | 水平7：number | - | - |\n| - | - | 水平8：int | - | - |\n| - | - | 水平9：long | - | - |\n| - | - | 水平10：score | - | - |\n| - | - | 水平11：singleOption | - | - |\n| - | - | 水平12：bigText | - | - |\n| - | - | 水平13：switch | - | - |\n| - | - | 水平14：image | - | - |\n| - | - | 水平15：attachment | - | - |\n| - | - | 水平16：quote | - | - |\n| - | - | 水平17：quoteList | - | - |\n| - | - | 水平18：multiLanguage | - | - |\n| - | - | 水平19：contact | - | - |\n| - | - | 水平20：credentialNo | - | - |\n| - | - | 水平21：FreeCT | - | - |\n| - | - | 水平22：OptionCT | - | - |\n| - | - | 水平23：UserDefine | - | - |\n| - | - | 水平24：multipleOption | - | - |\n\n## 生效条件说明\n\n1. 因素4：引用类型\n   - 生效条件：仅当因素3选择以下属性类型时生效：\n     - 水平11：singleOption（单选选项）\n     - 水平16：quote（引用）\n     - 水平17：quoteList（引用列表）\n\n2. 因素5：多语存储类型\n   - 生效条件：仅当因素3选择以下属性类型时生效：\n     - 水平18：multiLanguage（多语言）\n\n## 实验设计说明\n\n1. **实体类型（因素1）**：定义了实体的基本分类\n   - 多选引用实体：支持多选的引用类型实体\n   - 扩展实体：具有扩展属性的实体\n   - 普通实体：基础实体类型\n\n2. **实体表版本（因素2）**：定义了数据表的结构版本\n   - 特定版本：mdd_table_version_4 和 ypd_table_version_2\n   - 其他版本：除上述外的其他 tableVersion\n\n3. **属性类型（因素3）**：定义了实体的属性类型（共24种水平）\n   - 涵盖文本、数字、时间、引用、多媒体等多种属性类型\n\n4. **引用类型（因素4）**：定义了引用属性的存储类型\n   - 整数引用：使用整型存储引用关系\n   - 字符串引用：使用字符串存储引用关系\n\n5. **多语存储类型（因素5）**：定义了多语言属性的存储方式\n   - 行存储：每种语言单独一行\n   - 列存储：所有语言在同一行的不同列中\n\n## 实验组合数量\n\n- 因素1：3个水平\n- 因素2：2个水平\n- 因素3：24个水平\n- 因素4：2个水平（条件生效）\n- 因素5：2个水平（条件生效）\n\n**理论最大实验组合数**：3 × 2 × 24 × 2 × 2 = **576种组合**\n**实际有效组合数**：需要根据条件生效规则计算\n**特殊情况**：实际因素还包括属性的数量，但数量可以与其他因素合并在一起测试，所以未单一列入\n\n## 正交表（测试用例）\n\n| 用例ID | 实体类型 | 实体表版本 | 属性类型 | 引用类型 | 多语存储类型 | 是否主外键 | 说明 |\n|--------|----------|------------|----------|----------|--------------|------------|------|\n| TC-B01 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | text | - | - | - | 基础场景1 |\n| TC-B02 | 普通实体 | 其他tableVersion | link | - | - | - | 基础场景2 |\n| TC-B03 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | singleOption | integer | - | - | 触发因素4+新版本 |\n| TC-B04 | 普通实体 | 其他tableVersion | multiLanguage | - | row | - | 触发因素5 |\n| TC-B05 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | quoteList | string | - | - | 触发因素4 |\n| TC-B06 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | position | - | - | - | 新版本基础场景 |\n| TC-B07 | 普通实体 | 其他tableVersion | date | - | - | - | 基础场景3 |\n| TC-B08 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | dateTime | - | - | - | 基础场景4 |\n| TC-B09 | 普通实体 | 其他tableVersion | number | - | - | - | 基础场景5 |\n| TC-B10 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | int | - | - | - | 新版本基础场景 |\n| TC-B11 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | long | - | - | - | 基础场景6 |\n| TC-B12 | 普通实体 | 其他tableVersion | score | - | - | - | 基础场景7 |\n| TC-B13 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | bigText | - | - | - | 新版本基础场景 |\n| TC-B14 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | switch | - | - | - | 基础场景8 |\n| TC-B15 | 扩展实体 | 其他tableVersion | image | - | - | - | 扩展实体场景1 |\n| TC-B16 | 扩展实体 | mdd_table_version_5,ypd_table_version_3 | attachment | - | - | - | 新版本扩展实体 |\n| TC-B17 | 普通实体 | 其他tableVersion | contact | - | - | - | 基础场景9 |\n| TC-B18 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | credentialNo | - | - | - | 新版本基础场景 |\n| TC-B19 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | FreeCT | - | - | - | 基础场景10 |\n| TC-B20 | 普通实体 | 其他tableVersion | OptionCT | - | - | - | 基础场景11 |\n| TC-B21 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | UserDefine | - | - | - | 新版本基础场景 |\n| TC-B22 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | multipleOption | - | - | - | 基础场景12 |\n| TC-B23 | 多选引用实体 | mdd_table_version_5,ypd_table_version_3 | quote | integer | - | 是 | 新版本复杂场景1 |\n| TC-B24 | 普通实体 | 其他tableVersion | multiLanguage | - | column | - | 触发因素5（另一水平） |\n| TC-B25 | 扩展实体 | 其他tableVersion | singleOption | string | - | - | 扩展实体+singleOption |\n| TC-B26 | 多选引用实体 | mdd_table_version_4,ypd_table_version_2 | quote | string | - | 否 | 复杂场景2 |\n| TC-B27 | 扩展实体 | mdd_table_version_5,ypd_table_version_3 | quoteList | integer | - | - | 新版本扩展实体+quoteList |\n| TC-B28 | 普通实体 | 其他tableVersion | quote | string | - | 是 | 普通实体+quote组合 |\n| TC-B29 | 普通实体 | mdd_table_version_5,ypd_table_version_3 | time | - | - | - | 新版本基础场景 |\n| TC-B30 | 普通实体 | mdd_table_version_4,ypd_table_version_2 | quote | integer | - | 否 | 普通实体+quote组合2 |\n| TC-B31 | 扩展实体 | 其他tableVersion | multiLanguage | - | row | - | 扩展实体+multiLanguage |\n| TC-B32 | 多选引用实体 | 其他tableVersion | quote | string | - | 是 | 复杂场景3 |\n\n## 待确认事项\n\n以下不一致与缺失内容来自来源本身，未强行合并，交待审阅：\n\n- 因素2 水平表述不一致：水平表列出 mdd_table_version_4/ypd_table_version_2 与 mdd_table_version_5/ypd_table_version_3 两组特定版本，但实验设计说明仅提及\"特定版本：mdd_table_version_4 和 ypd_table_version_2\"；组合数算式按因素2为 2 水平计算，而用例表中两个版本均出现，实际可能为 3 水平。\n- 用例表中存在\"是否主外键\"维度（TC-B23/26/28/30/32），但该维度未列入正式因素水平表。\n- 类图与新旧流程图（`assets/动态分配采集-分配类图.png`、`assets/动态分配-宽表配置.png`、`assets/动态分配旧.png`、`assets/动态分配新.png`）内容未入库，具体结构待源码或图片解析确认。",
+                "startLine": 1,
+                "endLine": 132,
+                "snapshot": {
+                  "runId": "958366d1-bbd3-46fd-aab5-8f5e71ea940a",
+                  "side": "after"
+                }
+              }
+            ]
+          },
+          "inputChars": 8025,
+          "maxCtx": 128000,
+          "safetyChars": 1024,
+          "outputTokens": 29737
+        }
+      ],
+      "outputs": [
+        {
+          "attempt": 1,
+          "status": "complete",
+          "result": {
+            "sameSubject": true,
+            "sameVersion": true,
+            "sameConditions": true,
+            "incompatible": true,
+            "explainedDifference": false,
+            "reason": "同一文档同一对象：因素·水平表列出实体表版本三组取值（mdd_table_version_4/ypd_table_version_2、其他tableVersion、mdd_table_version_5/ypd_table_version_3，第三行且误标'水平2'），而实验设计说明与组合数算式均按2个水平计算；用例表也实际使用三组版本值。两处主张在同一文档声明范围内不相容。文档'待确认事项'仅指出该不一致待审阅，未消除矛盾。"
+          },
+          "materialIds": [
+            "after-1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "same-scope-conflict",
+      "model": "GLM-5.3-Flash",
+      "verdict": {
+        "sameSubject": true,
+        "sameVersion": true,
+        "sameConditions": true,
+        "incompatible": true,
+        "explainedDifference": false
+      },
+      "inputs": [
+        {
+          "attempt": 1,
+          "input": {
+            "issue": {
+              "title": "并发上限不同",
+              "description": "核对是否存在相同适用范围内的事实冲突"
+            },
+            "evidence": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V7 在标准模式下并发上限为 9。"
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V7 在标准模式下并发上限为 17。"
+              }
+            ],
+            "materials": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V7 在标准模式下并发上限为 9。",
+                "startLine": 1,
+                "endLine": 2
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V7 在标准模式下并发上限为 17。",
+                "startLine": 1,
+                "endLine": 2
+              }
+            ]
+          },
+          "inputChars": 1490,
+          "maxCtx": 128000,
+          "safetyChars": 1024,
+          "outputTokens": 31371
+        }
+      ],
+      "outputs": [
+        {
+          "attempt": 1,
+          "status": "complete",
+          "result": {
+            "sameSubject": true,
+            "sameVersion": true,
+            "sameConditions": true,
+            "incompatible": true,
+            "explainedDifference": false,
+            "reason": "两份材料均在《珊瑚引擎并发规则》下陈述珊瑚引擎 V7 标准模式并发上限，适用对象、版本和条件相同，9 与 17 不可能同时成立，且无解释差异的说明。"
+          },
+          "materialIds": [
+            "material-0",
+            "material-1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "different-version",
+      "model": "GLM-5.3-Flash",
+      "verdict": {
+        "sameSubject": false,
+        "sameVersion": false,
+        "sameConditions": false,
+        "incompatible": false,
+        "explainedDifference": true
+      },
+      "inputs": [
+        {
+          "attempt": 1,
+          "input": {
+            "issue": {
+              "title": "并发上限不同",
+              "description": "核对是否存在相同适用范围内的事实冲突"
+            },
+            "evidence": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V6 在标准模式下并发上限为 9。"
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V7 在标准模式下并发上限为 17。"
+              }
+            ],
+            "materials": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V6 在标准模式下并发上限为 9。",
+                "startLine": 1,
+                "endLine": 2
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V7 在标准模式下并发上限为 17。",
+                "startLine": 1,
+                "endLine": 2
+              }
+            ]
+          },
+          "inputChars": 1490,
+          "maxCtx": 128000,
+          "safetyChars": 1024,
+          "outputTokens": 31371
+        }
+      ],
+      "outputs": [
+        {
+          "attempt": 1,
+          "status": "complete",
+          "result": {
+            "sameSubject": false,
+            "sameVersion": false,
+            "sameConditions": false,
+            "incompatible": false,
+            "explainedDifference": true,
+            "reason": "两条主张分别针对珊瑚引擎 V6 与 V7，属于不同对象版本，标准模式下并发上限不同不构成冲突。"
+          },
+          "materialIds": [
+            "material-0",
+            "material-1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "different-condition",
+      "model": "GLM-5.3-Flash",
+      "verdict": {
+        "sameSubject": true,
+        "sameVersion": true,
+        "sameConditions": false,
+        "incompatible": false,
+        "explainedDifference": true
+      },
+      "inputs": [
+        {
+          "attempt": 1,
+          "input": {
+            "issue": {
+              "title": "并发上限不同",
+              "description": "核对是否存在相同适用范围内的事实冲突"
+            },
+            "evidence": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V7 在标准模式下并发上限为 9。"
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "startLine": 2,
+                "endLine": 2,
+                "quote": "珊瑚引擎 V7 在扩展模式下并发上限为 17。"
+              }
+            ],
+            "materials": [
+              {
+                "id": "material-0",
+                "path": "wiki/designs/limit-0.md",
+                "revision": "sha256:fixture-0",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V7 在标准模式下并发上限为 9。",
+                "startLine": 1,
+                "endLine": 2
+              },
+              {
+                "id": "material-1",
+                "path": "wiki/designs/limit-1.md",
+                "revision": "sha256:fixture-1",
+                "text": "# 珊瑚引擎并发规则\n珊瑚引擎 V7 在扩展模式下并发上限为 17。",
+                "startLine": 1,
+                "endLine": 2
+              }
+            ]
+          },
+          "inputChars": 1490,
+          "maxCtx": 128000,
+          "safetyChars": 1024,
+          "outputTokens": 31371
+        }
+      ],
+      "outputs": [
+        {
+          "attempt": 1,
+          "status": "complete",
+          "result": {
+            "sameSubject": true,
+            "sameVersion": true,
+            "sameConditions": false,
+            "incompatible": false,
+            "explainedDifference": true,
+            "reason": "两份材料分别描述标准模式（上限9）与扩展模式（上限17），模式是声明的一部分，属于不同适用条件，数值不同不构成冲突。"
+          },
+          "materialIds": [
+            "material-0",
+            "material-1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "full-snapshot-review",
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "statistics": {
+        "requests": 7,
+        "inputChars": 115835,
+        "outputChars": 3338,
+        "failedRequests": 0,
+        "elapsedMs": 57791
+      },
+      "items": [
+        {
+          "type": "contradiction",
+          "title": "因素2 实体表版本的水平数存在同页不相容表述"
+        },
+        {
+          "type": "missing-page",
+          "title": "特征扩展实体创建与抽取流程关键内容待补入已有页面"
+        },
+        {
+          "type": "missing-page",
+          "title": "主键自动填充机制（FillPKRule）关键约束待补齐"
+        },
+        {
+          "type": "suggestion",
+          "title": "宽表动态分配流程图与类图内容待源码或图片解析验证"
+        },
+        {
+          "type": "suggestion",
+          "title": "正交用例的因素2水平数与是否主外键维度不一致待核实"
+        }
+      ]
+    }
+  ]
+}

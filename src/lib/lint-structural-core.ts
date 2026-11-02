@@ -119,11 +119,19 @@ export function computeStructuralLint(
     }
   })
 
+  // 优先完整文件名（允许含 #），再解析章节；章节存在性由格式检查单独核对。
+  const linkedPage = (link: string): number | undefined => {
+    for (const reference of [link, link.split("#")[0]]) {
+      const target = slugMap.get(normalizeTarget(reference))
+        ?? slugMap.get(normalizeTarget(fileName(reference).replace(/\.md$/i, "")))
+      if (target !== undefined) return target
+    }
+    return undefined
+  }
   const inboundCounts = new Map<number, number>()
   for (const page of pages) {
     for (const link of page.outlinks) {
-      const target = slugMap.get(normalizeTarget(link))
-        ?? slugMap.get(normalizeTarget(fileName(link).replace(/\.md$/i, "")))
+      const target = linkedPage(link)
       if (target !== undefined) inboundCounts.set(target, (inboundCounts.get(target) ?? 0) + 1)
     }
   }
@@ -204,9 +212,8 @@ export function computeStructuralLint(
         suggestedTarget: relatedCandidate(pageIndex, "target")?.shortName,
       })
     }
-    for (const link of ignored ? [] : page.outlinks) {
-      const basename = fileName(link).replace(/\.md$/i, "")
-      if (slugMap.has(normalizeTarget(link)) || slugMap.has(normalizeTarget(basename))) continue
+    for (const link of ignored ? [] : new Set(page.outlinks)) {
+      if (link.startsWith("#") || linkedPage(link) !== undefined) continue
       results.push({
         type: "broken-link",
         severity: "warning",

@@ -1,20 +1,18 @@
 import { readFile, listDirectory } from "@/commands/fs"
-import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
-import { buildLanguageDirective } from "@/lib/output-language"
-import { normalizeReviewTitle } from "@/lib/review-utils"
 import {
   computeStructuralLint,
   type StructuralLintFinding,
   type StructuralLintPage,
 } from "@/lib/lint-structural-core"
 import type { LintConfig } from "@/lib/lint-config"
+import type { ReviewItem } from "@/stores/review-store"
 
 export interface LintResult {
-  type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
+  type: "orphan" | "broken-link" | "no-outlinks" | "structure" | "semantic"
   severity: "warning" | "info"
   page: string
   detail: string
@@ -22,6 +20,7 @@ export interface LintResult {
   brokenTarget?: string
   suggestedTarget?: string
   suggestedSource?: string
+  reviewItem?: ReviewItem
 }
 
 const SUGGESTION_TOKEN_WINDOW = 4000
@@ -53,30 +52,6 @@ function extractWikilinks(content: string): string[] {
 function relativeToSlug(relativePath: string): string {
   // relativePath relative to wiki/ dir, e.g. "entities/foo-bar" or "queries/my-page-2024-01-01"
   return relativePath.replace(/\.md$/, "")
-}
-
-/**
- * Normalize a name for missing-page existence comparison. NFKC folds full-width
- * and compatibility forms so CJK / full-width variants compare equal.
- */
-function normalizeForExistence(s: string): string {
-  return normalizeReviewTitle(s).normalize("NFKC").trim().toLowerCase()
-}
-
-/**
- * Decide whether an LLM `missing-page` finding actually refers to a page that
- * already exists. The LLM does not reliably cross-reference the file list, so it
- * flags entities whose page is already present. Only exact normalized names are
- * accepted here. Substring matching is unsafe because short, valid page titles
- * can also be ordinary words inside an unrelated missing-page finding.
- */
-function missingPageAlreadyExists(
-  llmTitle: string,
-  existingPageNames: Set<string>,
-): boolean {
-  const norm = normalizeForExistence(llmTitle)
-  if (!norm) return false
-  return existingPageNames.has(norm)
 }
 
 function extractTitle(content: string, fallbackPath: string): string {
@@ -199,158 +174,34 @@ export async function runStructuralLint(
 
 // ── Semantic lint ─────────────────────────────────────────────────────────────
 
-const LINT_BLOCK_REGEX =
-  /---LINT:\s*([^\n|]+?)\s*\|\s*([^\n|]+?)\s*\|\s*([^\n-]+?)\s*---\n([\s\S]*?)---END LINT---/g
+/** 公共审阅事项投影为 Wiki 检查卡片，原始证据及人工状态随卡片保留。 */
+export function reviewItemsToLint(items: ReviewItem[]): LintResult[] {
+  return items.map((item) => ({
+    type: item.type === "structure" ? item.subtype === "失效引用" ? "broken-link" : "structure" : "semantic",
+    severity: item.type === "suggestion" ? "info" : "warning",
+    page: (item.affectedPages?.[0] ?? "").replace(/^wiki\//, ""), detail: `[${item.type}] ${item.title}\n${item.description}`,
+    affectedPages: item.affectedPages?.map((path) => path.replace(/^wiki\//, "")), reviewItem: item }))
+}
 
-export async function runSemanticLint(
-  projectPath: string,
-  llmConfig: LlmConfig,
-  signal?: AbortSignal,
-): Promise<LintResult[]> {
-  const pp = normalizePath(projectPath)
+/** 兼容数组调用方；未完成通过带已有结果的异常表达，不能返回空数组冒充通过。 */
+export class SemanticLintIncompleteError extends Error {
+  constructor(message: string, readonly results: LintResult[]) { super(message) }
+}
+
+export async function runSemanticLint(projectPath: string, llmConfig: LlmConfig, signal?: AbortSignal): Promise<LintResult[]> {
   const activity = useActivityStore.getState()
-  const activityId = activity.addItem({
-    type: "lint",
-    title: "Semantic wiki lint",
-    status: "running",
-    detail: "Reading wiki pages...",
-    filesWritten: [],
-  })
-
-  const wikiRoot = `${pp}/wiki`
-  let tree: FileNode[]
+  const activityId = activity.addItem({ type: "lint", title: "Wiki review", status: "running", detail: "Checking wiki modules...", filesWritten: [] })
   try {
-    tree = await listDirectory(wikiRoot)
-  } catch {
-    activity.updateItem(activityId, { status: "error", detail: "Failed to read wiki directory." })
-    return []
+    const { runWikiReview } = await import("./wiki-review")
+    const report = await runWikiReview(normalizePath(projectPath), llmConfig, signal,
+      (progress) => activity.updateItem(activityId, { detail: progress.detail }))
+    signal?.throwIfAborted()
+    const results = reviewItemsToLint(report.items)
+    if (report.status !== "complete") throw new SemanticLintIncompleteError(report.reasons.join("；") || "Wiki 检查未完成", results)
+    activity.updateItem(activityId, { status: "done", detail: `Found ${results.length} issue(s).` })
+    return results
+  } catch (error) {
+    activity.updateItem(activityId, { status: "error", detail: error instanceof Error ? error.message : String(error) })
+    throw error
   }
-
-  const wikiFiles = flattenMdFiles(tree).filter(
-    (f) => f.name !== "log.md"
-  )
-
-  // Build a compact summary of each page (frontmatter + first 500 chars), and
-  // collect the set of existing page names (basename + frontmatter title) used
-  // to filter out `missing-page` findings for pages that already exist (#537).
-  const summaries: string[] = []
-  const existingPageNames = new Set<string>()
-  for (const f of wikiFiles) {
-    if (signal?.aborted) throw new DOMException("Semantic lint cancelled", "AbortError")
-    const basename = f.name.replace(/\.md$/i, "")
-    if (basename) existingPageNames.add(normalizeForExistence(basename))
-    try {
-      const content = await readFile(f.path)
-      const preview = content.slice(0, 500) + (content.length > 500 ? "..." : "")
-      const shortPath = getRelativePath(f.path, wikiRoot)
-      const title = extractTitle(content, shortPath)
-      if (title) existingPageNames.add(normalizeForExistence(title))
-      summaries.push(`### ${shortPath}\n${preview}`)
-    } catch {
-      // skip
-    }
-  }
-
-  if (summaries.length === 0) {
-    activity.updateItem(activityId, { status: "done", detail: "No wiki pages to lint." })
-    return []
-  }
-
-  activity.updateItem(activityId, { detail: "Running LLM semantic analysis..." })
-
-  // For auto-mode language detection, sample the concatenated summaries
-  // so non-English wikis get a matching language directive.
-  const summarySample = summaries.join("\n").slice(0, 2000)
-
-  const prompt = [
-    "You are a wiki quality analyst. Review the following wiki page summaries and identify issues.",
-    "",
-    buildLanguageDirective(summarySample),
-    "",
-    "For each issue, output exactly this format:",
-    "",
-    "---LINT: type | severity | Short title---",
-    "Description of the issue.",
-    "PAGES: page1.md, page2.md",
-    "---END LINT---",
-    "",
-    "Types:",
-    "- contradiction: two or more pages make conflicting claims",
-    "- stale: information that appears outdated or superseded",
-    "- missing-page: an important concept is heavily referenced but has no dedicated page",
-    "- suggestion: a question or source worth adding to the wiki",
-    "For missing-page findings, Short title must be only the exact missing concept or entity name, without explanatory prefixes or suffixes.",
-    "",
-    "Severities:",
-    "- warning: should be addressed",
-    "- info: nice to have",
-    "",
-    "Only report genuine issues. Do not invent problems. Output ONLY the ---LINT--- blocks, no other text.",
-    "",
-    "## Wiki Pages",
-    "",
-    summaries.join("\n\n"),
-  ].join("\n")
-
-  let raw = ""
-  let hadError = false
-
-  await streamChat(
-    llmConfig,
-    [{ role: "user", content: prompt }],
-    {
-      onToken: (token) => { raw += token },
-      onDone: () => {},
-      onError: (err) => {
-        hadError = true
-        activity.updateItem(activityId, {
-          status: "error",
-          detail: `LLM error: ${err.message}`,
-        })
-      },
-    },
-    signal,
-  )
-
-  if (signal?.aborted) throw new DOMException("Semantic lint cancelled", "AbortError")
-  if (hadError) return []
-
-  const results: LintResult[] = []
-  const matches = raw.matchAll(LINT_BLOCK_REGEX)
-
-  for (const match of matches) {
-    const rawType = match[1].trim().toLowerCase()
-    const severity = match[2].trim().toLowerCase()
-    const title = match[3].trim()
-    const body = match[4].trim()
-
-    // Drop `missing-page` findings whose page already exists — the LLM often
-    // flags entities that already have a page, especially in non-English wikis
-    // where its free-form titles don't match a fixed prefix (#537).
-    if (rawType === "missing-page" && missingPageAlreadyExists(title, existingPageNames)) {
-      continue
-    }
-
-    const pagesMatch = body.match(/^PAGES:\s*(.+)$/m)
-    const affectedPages = pagesMatch
-      ? pagesMatch[1].split(",").map((p) => p.trim())
-      : undefined
-
-    const detail = body.replace(/^PAGES:.*$/m, "").trim()
-
-    results.push({
-      type: "semantic",
-      severity: (severity === "warning" ? "warning" : "info") as LintResult["severity"],
-      page: title,
-      detail: `[${rawType}] ${detail}`,
-      affectedPages,
-    })
-  }
-
-  activity.updateItem(activityId, {
-    status: "done",
-    detail: `Found ${results.length} semantic issue(s).`,
-  })
-
-  return results
 }

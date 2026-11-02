@@ -1,0 +1,502 @@
+{
+  "model": "qwen3.5:4b",
+  "results": [
+    {
+      "id": "same-condition-conflict",
+      "expected": "contradiction",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "contradiction"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "scopeChecks": [
+        {
+          "verdict": {
+            "sameSubject": true,
+            "sameVersion": true,
+            "sameConditions": true,
+            "incompatible": true,
+            "explainedDifference": false
+          },
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:5b8f28220be924f59810a5bdfa89cf7f9af9478b1aa3b0cfcefcef4dbd7b1c82",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 17。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "603b2c1a-7c65-4941-93c8-f70a33d68e8b",
+                "side": "after"
+              }
+            },
+            {
+              "id": "before-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:c7bc09ab8235811abfba61663f93b5369feb5d80c5360ebbf96968aa16b8125f",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 9。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "603b2c1a-7c65-4941-93c8-f70a33d68e8b",
+                "side": "before"
+              }
+            }
+          ]
+        }
+      ],
+      "elapsedMs": 8990,
+      "requests": 7,
+      "inputChars": 16078,
+      "issues": [
+        {
+          "type": "contradiction",
+          "subtype": "覆盖前后",
+          "title": "珊瑚引擎 V7 标准模式并发上限不一致",
+          "description": "同一对象（珊瑚引擎 V7 在标准模式下）的并发上限数值存在冲突：本轮页面声明为 17，而前轮页面声明为 9。该差异涉及核心性能指标，且未提供版本变更说明或上下文解释。",
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:5b8f28220be924f59810a5bdfa89cf7f9af9478b1aa3b0cfcefcef4dbd7b1c82",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 17。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "603b2c1a-7c65-4941-93c8-f70a33d68e8b",
+                "side": "after"
+              }
+            },
+            {
+              "id": "before-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:c7bc09ab8235811abfba61663f93b5369feb5d80c5360ebbf96968aa16b8125f",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 9。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "603b2c1a-7c65-4941-93c8-f70a33d68e8b",
+                "side": "before"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "version-difference",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "scopeChecks": [
+        {
+          "verdict": {
+            "sameSubject": false,
+            "sameVersion": false,
+            "sameConditions": false,
+            "incompatible": false,
+            "explainedDifference": false
+          },
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:5b8f28220be924f59810a5bdfa89cf7f9af9478b1aa3b0cfcefcef4dbd7b1c82",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 17。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "6fda14c8-133b-4407-ae89-c424f3bd070d",
+                "side": "after"
+              }
+            },
+            {
+              "id": "before-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:165c6ad7d383de3cd01de2edf05f4c7e4af6c7a9c47b4c903a3c83763f58cad6",
+              "text": "珊瑚引擎 V6 在标准模式下并发上限为 9。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "6fda14c8-133b-4407-ae89-c424f3bd070d",
+                "side": "before"
+              }
+            }
+          ]
+        }
+      ],
+      "elapsedMs": 8745,
+      "requests": 7,
+      "inputChars": 16074,
+      "issues": []
+    },
+    {
+      "id": "distinct-conditions",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "scopeChecks": [
+        {
+          "verdict": {
+            "sameSubject": false,
+            "sameVersion": true,
+            "sameConditions": false,
+            "incompatible": false,
+            "explainedDifference": false
+          },
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:2ce9356ebc1fa95513b7b81cfe84dad14ac80a94d8ace5703db001c590aeb3f3",
+              "text": "珊瑚引擎 V7 在扩展模式下并发上限为 17。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "262a4748-ba0b-4313-854a-f1d680a673db",
+                "side": "after"
+              }
+            },
+            {
+              "id": "before-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:c7bc09ab8235811abfba61663f93b5369feb5d80c5360ebbf96968aa16b8125f",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 9。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "262a4748-ba0b-4313-854a-f1d680a673db",
+                "side": "before"
+              }
+            }
+          ]
+        }
+      ],
+      "elapsedMs": 8921,
+      "requests": 7,
+      "inputChars": 16074,
+      "issues": []
+    },
+    {
+      "id": "omitted-detail",
+      "expected": "coverage",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "coverage"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 5757,
+      "requests": 6,
+      "inputChars": 15174,
+      "issues": [
+        {
+          "type": "coverage",
+          "title": "页面缺失来源原文中关于超时时长和重试次数的关键信息，导致事实覆盖不完整。",
+          "description": "页面缺失来源原文中关于超时时长和重试次数的关键信息，导致事实覆盖不完整。",
+          "evidence": [
+            {
+              "id": "source",
+              "path": "raw/sources/facts.md",
+              "revision": "sha256:786252661e29c146dee3910c4bf6478980eb58cf0c7fd4e79ffca9f41276cf82",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 17，超时为 43 秒；超时后只重试一次。",
+              "startLine": 1,
+              "endLine": 1,
+              "snapshot": {
+                "runId": "e2b06c50-5486-465a-b0ee-af3501f25ff6",
+                "side": "source"
+              }
+            },
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:5b8f28220be924f59810a5bdfa89cf7f9af9478b1aa3b0cfcefcef4dbd7b1c82",
+              "text": "---\ntype: concept\ntitle: 观测事实\nsources: [facts.md]\n---\n# 观测事实\n\n珊瑚引擎 V7 在标准模式下并发上限为 17。\n",
+              "startLine": 1,
+              "endLine": 9,
+              "snapshot": {
+                "runId": "e2b06c50-5486-465a-b0ee-af3501f25ff6",
+                "side": "after"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "existing-embedded-fact",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "duplicate"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 10066,
+      "requests": 6,
+      "inputChars": 17105,
+      "issues": [
+        {
+          "type": "duplicate",
+          "subtype": "本轮页面",
+          "title": "观测事实与校验章节内容实质重复",
+          "description": "材料 after-0 中的‘观测事实’概念正文（青隼协议使用 31 位校验码）与材料 wiki/concepts/design.md 中‘校验’章节的正文（青隼协议使用 31 位校验码）完全一致，且后文结论（无需独立术语页/无需独立术语页面）也相同。双方核心信息无独立增量，应合并为单一事实记录。",
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:fa8fa0aa1544d43b9c70156cc8fdb55ce501972914f537540cd735ec5cb22892",
+              "text": "青隼协议使用 31 位校验码。该事实记录在设计说明的校验章节中，项目无需单独术语页。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "25ec0bf5-1f35-41af-862a-9b4f5bb6395b",
+                "side": "after"
+              }
+            },
+            {
+              "id": "wiki/concepts/design.md-sha256:a51b3124933b691491a518db9448326faab13750d750a8290c584ada7f88afdc:10:11",
+              "path": "wiki/concepts/design.md",
+              "revision": "sha256:a51b3124933b691491a518db9448326faab13750d750a8290c584ada7f88afdc",
+              "text": "青隼协议使用 31 位校验码。项目无需独立术语页面。",
+              "endLine": 11,
+              "startLine": 11
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "research-gap",
+      "expected": "suggestion",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "suggestion"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 7508,
+      "requests": 6,
+      "inputChars": 15424,
+      "issues": [
+        {
+          "type": "suggestion",
+          "subtype": "本轮页面",
+          "title": "极寒场景下霁蓝缓存策略 A/B 实现吞吐对比实验",
+          "description": "材料明确指出霁蓝缓存策略的两种实现（A、B）在极寒场景下的性能尚未进行对照实验，且无法判断哪种更快。这是一个明确的待验证假设，值得通过实验来消除不确定性并指导架构决策。",
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:bfcf25416d99d200c23d7fe8c5053d5d873ab887ebb596980b44a7d90d7488fa",
+              "text": "霁蓝缓存策略有 A、B 两种实现。两者在极寒场景下的吞吐尚未做对照实验，目前不能判断哪种更快。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "a9666686-5dde-4f67-afeb-a59f00b2c266",
+                "side": "after"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "duplicate-pages",
+      "expected": "duplicate",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "duplicate"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 9514,
+      "requests": 6,
+      "inputChars": 17018,
+      "issues": [
+        {
+          "type": "duplicate",
+          "subtype": "本轮页面",
+          "title": "疑似重复：核心内容实质相同",
+          "description": "材料 after-0（观测事实）与 wiki/concepts/design.md 中关于月栈队列容量、溢出处理及消费顺序的描述完全一致，仅标题和所属概念不同。",
+          "evidence": [
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:b3736dca9668dfecd0ee665a8b865e8e2b737ac8a02ab36ee9be21d5a272b412",
+              "text": "月栈队列容量为 23 条；溢出请求立即拒绝，消费采用先进先出顺序。",
+              "startLine": 8,
+              "endLine": 8,
+              "snapshot": {
+                "runId": "e3ad3366-b91c-48da-b31c-54e2555e20d7",
+                "side": "after"
+              }
+            },
+            {
+              "id": "wiki/concepts/design.md-sha256:d31392f624b8828e4472080c6d1fbef1ee2a0dd44370e158b544eee48e9bae33:8:9",
+              "path": "wiki/concepts/design.md",
+              "revision": "sha256:d31392f624b8828e4472080c6d1fbef1ee2a0dd44370e158b544eee48e9bae33",
+              "text": "月栈队列容量为 23 条；溢出请求立即拒绝，消费采用先进先出顺序。",
+              "endLine": 9,
+              "startLine": 9
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dedicated-page-needed",
+      "expected": "missing-page",
+      "foundExpected": false,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 8030,
+      "requests": 7,
+      "inputChars": 19018,
+      "issues": []
+    }
+  ]
+}

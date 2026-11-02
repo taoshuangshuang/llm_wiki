@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import {
   Link2Off,
   Unlink,
@@ -12,13 +12,19 @@ import {
   Trash2,
   Link,
   Settings2,
+  Pause,
+  Play,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
-import { runStructuralLint, runSemanticLint } from "@/lib/lint"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { startLintRun, pauseLintRun, resumeLintRun, restoreLintRun } from "@/lib/lint-runner"
+import { useLintRunStore, DEFAULT_LINT_RUN } from "@/stores/lint-run-store"
+import { loadProjectSchema } from "@/lib/project-schema"
+import { parseModuleCatalog, type BusinessModule, type ModuleCatalog } from "@/features/business-modules/catalog"
+import { loadModulePages } from "@/features/business-modules/pages"
+import { filterLintItems, lintModuleIndex, type LintFilters } from "@/lib/lint-filters"
 import { readFile, writeFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
@@ -70,18 +76,37 @@ export function LintView() {
     orphan: { icon: Unlink, label: t("lint.typeLabels.orphan") },
     "broken-link": { icon: Link2Off, label: t("lint.typeLabels.broken-link") },
     "no-outlinks": { icon: ArrowUpRight, label: t("lint.typeLabels.no-outlinks") },
+    structure: { icon: Settings2, label: t("lint.typeLabels.structure") },
     semantic: { icon: BrainCircuit, label: t("lint.typeLabels.semantic") },
   }), [t])
 
   const items = useLintStore((s) => s.items)
-  const addLintItems = useLintStore((s) => s.addItems)
   const removeLintItems = useLintStore((s) => s.removeItems)
-  const clearLintItems = useLintStore((s) => s.clearItems)
 
-  const [running, setRunning] = useState(false)
-  const [lintProgress, setLintProgress] = useState<{ completed: number; total: number } | null>(null)
-  const [hasRun, setHasRun] = useState(false)
-  const [runSemantic, setRunSemantic] = useState(false)
+  const projectPath = project ? normalizePath(project.path) : ""
+  const run = useLintRunStore((state) => state.runs[projectPath] ?? DEFAULT_LINT_RUN)
+  const updateRun = useLintRunStore((state) => state.update)
+  const { running, paused, pausing, phase, progress: lintProgress, hasRun, runSemantic, error: checkError, detail: checkDetail } = run
+  const dataVersion = useWikiStore((state) => state.dataVersion)
+  const [restoringHistory, setRestoringHistory] = useState(true)
+  const [filters, setFilters] = useState<LintFilters>({ type: "", moduleId: "", query: "" })
+  const [moduleData, setModuleData] = useState<{ path: string; catalog: ModuleCatalog | null; index: Map<string, string[]> }>({ path: "", catalog: null, index: new Map() })
+  const [moduleError, setModuleError] = useState<string | null>(null)
+  const [modulesLoading, setModulesLoading] = useState(false)
+  const catalog = moduleData.path === projectPath ? moduleData.catalog : null
+  const moduleIndex = useMemo(() => moduleData.path === projectPath ? moduleData.index : new Map<string, string[]>(), [moduleData, projectPath])
+  const visibleItems = useMemo(() => filterLintItems(items, filters, catalog, moduleIndex), [items, filters, catalog, moduleIndex])
+  const moduleOptions = useMemo(() => {
+    const options: { id: string; label: string }[] = []
+    function visit(nodes: BusinessModule[], depth = 0) {
+      for (const node of nodes) {
+        options.push({ id: node.id, label: `${"　".repeat(depth)}${node.name}` })
+        visit(node.children, depth + 1)
+      }
+    }
+    if (catalog) visit(catalog.roots)
+    return options
+  }, [catalog])
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [lintConfig, setLintConfig] = useState<LintConfig>(DEFAULT_LINT_CONFIG)
   const [ignoredPagesDraft, setIgnoredPagesDraft] = useState("")
@@ -91,9 +116,6 @@ export function LintView() {
   const [batchFixing, setBatchFixing] = useState(false)
   const [fixError, setFixError] = useState<string | null>(null)
   const [selectedLintIds, setSelectedLintIds] = useState<Set<string>>(() => new Set())
-  const lintAbortRef = useRef<AbortController | null>(null)
-
-  useEffect(() => () => lintAbortRef.current?.abort(), [])
 
   useEffect(() => {
     let active = true
@@ -116,6 +138,45 @@ export function LintView() {
     })
     return () => { active = false }
   }, [project])
+
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    setModuleError(null)
+    setModulesLoading(Boolean(projectPath))
+    if (!projectPath) return
+    void (async () => {
+      try {
+        const next = parseModuleCatalog(await loadProjectSchema(projectPath, "classification"))
+          ?? parseModuleCatalog('## Business Modules\n```json\n{"version":1,"modules":[]}\n```')!
+        const result = await loadModulePages(projectPath, next, undefined, controller.signal)
+        if (!active) return
+        setModuleData({ path: projectPath, catalog: next, index: lintModuleIndex(projectPath, result.pages) })
+        setFilters((current) => current.moduleId && !next.byId.has(current.moduleId) ? { ...current, moduleId: "" } : current)
+        if (result.unreadable.length) setModuleError(t("sidebar.moduleUnreadable", { count: result.unreadable.length }))
+      } catch (error) {
+        if (active) { setModuleData({ path: projectPath, catalog: null, index: new Map() }); setModuleError(String(error)) }
+      } finally { if (active) setModulesLoading(false) }
+    })()
+    return () => { active = false; controller.abort() }
+  }, [projectPath, dataVersion, t])
+
+  useEffect(() => {
+    setFilters({ type: "", moduleId: "", query: "" })
+    setSelectedLintIds(new Set())
+  }, [projectPath])
+
+  function changeFilter(patch: Partial<LintFilters>) {
+    setFilters((current) => ({ ...current, ...patch }))
+    setSelectedLintIds(new Set())
+  }
+
+  useEffect(() => {
+    let active = true
+    setRestoringHistory(Boolean(projectPath))
+    if (projectPath) void restoreLintRun(projectPath).finally(() => { if (active) setRestoringHistory(false) })
+    return () => { active = false }
+  }, [projectPath])
 
   const handleSaveLintConfig = useCallback(async () => {
     if (!project || savingConfig) return
@@ -142,51 +203,16 @@ export function LintView() {
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
-    const pp = normalizePath(project.path)
-    setRunning(true)
     setFixError(null)
-    setLintProgress(null)
     setSelectedLintIds(new Set())
-    clearLintItems()
-    const controller = new AbortController()
-    lintAbortRef.current = controller
-    try {
-      const structural = await runStructuralLint(pp, {
-        signal: controller.signal,
-        config: {
-          ...lintConfig,
-          ignorePages: ignoredPagesDraft.split(/[,，\n]/),
-        },
-        onProgress: (completed, total) => setLintProgress({ completed, total }),
-      })
-      let all = structural
-
-      if (runSemantic && hasUsableLlm(llmConfig)) {
-        const semantic = await runSemanticLint(pp, llmConfig, controller.signal)
-        all = [...structural, ...semantic]
-      }
-
-      addLintItems(all)
-      setHasRun(true)
-    } catch (err) {
-      if (!(err instanceof DOMException && err.name === "AbortError")) {
-        console.error("Lint failed:", err)
-      }
-    } finally {
-      lintAbortRef.current = null
-      setRunning(false)
-      setLintProgress(null)
+    const options = {
+      project, llmConfig, runSemantic,
+      config: { ...lintConfig, ignorePages: ignoredPagesDraft.split(/[,，\n]/) },
+      messages: { preparing: t("lint.preparingSemantic"), incomplete: t("lint.checkIncomplete"), needsModel: t("lint.checkNeedsModel") },
     }
-  }, [
-    project,
-    llmConfig,
-    lintConfig,
-    ignoredPagesDraft,
-    running,
-    runSemantic,
-    addLintItems,
-    clearLintItems,
-  ])
+    if (paused) await resumeLintRun(projectPath, options)
+    else await startLintRun(options)
+  }, [project, projectPath, running, paused, llmConfig, runSemantic, lintConfig, ignoredPagesDraft, t])
 
   async function handleOpenPage(page: string) {
     if (!project) return
@@ -208,6 +234,7 @@ export function LintView() {
   }
 
   const addLintItemToReview = useCallback((item: LintItem) => {
+    if (item.reviewItem) { useReviewStore.getState().addItems([item.reviewItem]); return }
     switch (item.type) {
       case "broken-link": {
         const pp = project ? normalizePath(project.path) : ""
@@ -343,7 +370,8 @@ export function LintView() {
       const { cascadeDeleteWikiPagesWithRefs } = await import(
         "@/lib/wiki-page-delete"
       )
-      await cascadeDeleteWikiPagesWithRefs(pp, [pagePath])
+      const result = await cascadeDeleteWikiPagesWithRefs(pp, [pagePath])
+      if (result.warnings.length > 0) await appDialog.alert({ message: result.warnings.join("\n") })
       useLintStore.getState().removeItem(item.id)
       await refreshProjectFileTree(pp, {
         projectId: project.id,
@@ -355,15 +383,15 @@ export function LintView() {
   }
 
   const { warnings, infos } = useMemo(
-    () => groupLintResultsForDisplay(items),
-    [items],
+    () => groupLintResultsForDisplay(visibleItems),
+    [visibleItems],
   )
-  const showResults = shouldShowLintResults(hasRun, items.length)
+  const showResults = running || paused || shouldShowLintResults(hasRun, items.length)
   const selectedLintItems = useMemo(
-    () => items.filter((item) => selectedLintIds.has(item.id)),
-    [items, selectedLintIds],
+    () => visibleItems.filter((item) => selectedLintIds.has(item.id)),
+    [visibleItems, selectedLintIds],
   )
-  const allLintSelected = items.length > 0 && selectedLintItems.length === items.length
+  const allLintSelected = visibleItems.length > 0 && selectedLintItems.length === visibleItems.length
   const isFixing = fixingId !== null || batchFixing
 
   const setLintSelected = useCallback((id: string, selected: boolean) => {
@@ -379,13 +407,13 @@ export function LintView() {
     setSelectedLintIds((prev) => {
       const next = new Set(prev)
       if (allLintSelected) {
-        for (const item of items) next.delete(item.id)
+        for (const item of visibleItems) next.delete(item.id)
       } else {
-        for (const item of items) next.add(item.id)
+        for (const item of visibleItems) next.add(item.id)
       }
       return next
     })
-  }, [allLintSelected, items])
+  }, [allLintSelected, visibleItems])
 
   const handleBatchDismiss = useCallback(() => {
     const ids = selectedLintItems.map((item) => item.id)
@@ -487,32 +515,48 @@ export function LintView() {
               type="checkbox"
               className="h-3 w-3"
               checked={runSemantic}
-              onChange={(e) => setRunSemantic(e.target.checked)}
+              onChange={(e) => updateRun(projectPath, { runSemantic: e.target.checked })}
+              disabled={running || paused || !project}
             />
             {t("lint.semantic")}
           </label>
           <Button
             size="sm"
             variant={running ? "outline" : "default"}
-            onClick={running ? () => lintAbortRef.current?.abort() : handleRunLint}
-            disabled={!project}
+            onClick={running ? () => pauseLintRun(projectPath) : handleRunLint}
+            disabled={!project || pausing || restoringHistory}
           >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
-            {running
-              ? lintProgress && lintProgress.total > 0
-                ? t("lint.cancelProgress", { completed: lintProgress.completed, total: lintProgress.total })
-                : t("lint.cancel")
-              : t("lint.runLint")}
+            {running ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : paused ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            {pausing ? t("lint.pausing") : running ? t("lint.pause") : paused ? t("lint.resume") : t("lint.runLint")}
           </Button>
         </div>
       </div>
 
+      {(running || paused || hasRun) && (
+        <div className="shrink-0 space-y-2 border-b bg-muted/10 px-4 py-3" aria-live="polite">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="font-medium">{t(pausing ? "lint.pausing" : paused ? "lint.paused" : running ? "lint.running" : checkError ? "lint.checkIncomplete" : "lint.finished")}</span>
+            <span className="text-muted-foreground">{t(phase === "semantic" ? "lint.semanticPhase" : "lint.structuralPhase")}{lintProgress && ` · ${t(phase === "semantic" ? "lint.batchProgress" : "lint.pageProgress", lintProgress)}`}</span>
+          </div>
+          <div role="progressbar" aria-label={t("lint.progress")} aria-valuemin={0} aria-valuemax={100}
+            aria-valuenow={lintProgress && lintProgress.total > 0 ? Math.round(lintProgress.completed / lintProgress.total * 100) : undefined}
+            className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className={`h-full rounded-full bg-primary transition-all ${running && !lintProgress ? "animate-pulse" : ""}`}
+              style={{ width: lintProgress && lintProgress.total > 0 ? `${Math.min(100, lintProgress.completed / lintProgress.total * 100)}%` : running ? "20%" : "0%" }} />
+          </div>
+          {checkDetail && <p className="text-xs text-muted-foreground">{checkDetail}</p>}
+          {paused && <p className="text-xs text-muted-foreground">{t("lint.resumeHint")}</p>}
+        </div>
+      )}
+
+      {runSemantic && <p className="border-b px-4 py-2 text-xs text-muted-foreground">{t("lint.semanticDescription")}</p>}
       {showRuleSettings && (
         <div className="shrink-0 space-y-3 border-b bg-muted/20 px-4 py-3 text-xs">
           <div className="font-medium">{t("lint.ruleSettings")}</div>
           <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
             <input
               type="checkbox"
+              disabled={running || paused}
               checked={lintConfig.ignoreOrphan}
               onChange={(event) => setLintConfig((config) => ({
                 ...config,
@@ -524,6 +568,7 @@ export function LintView() {
           <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
             <input
               type="checkbox"
+              disabled={running || paused}
               checked={lintConfig.ignoreNoOutlinks}
               onChange={(event) => setLintConfig((config) => ({
                 ...config,
@@ -535,6 +580,7 @@ export function LintView() {
           <label className="block space-y-1.5">
             <span className="text-muted-foreground">{t("lint.ignorePages")}</span>
             <textarea
+              disabled={running || paused}
               value={ignoredPagesDraft}
               onChange={(event) => setIgnoredPagesDraft(event.target.value)}
               placeholder={t("lint.ignorePagesPlaceholder")}
@@ -543,12 +589,31 @@ export function LintView() {
           </label>
           {configError && <p className="text-destructive">{configError}</p>}
           <div className="flex justify-end">
-            <Button size="sm" onClick={handleSaveLintConfig} disabled={savingConfig}>
+            <Button size="sm" onClick={handleSaveLintConfig} disabled={savingConfig || running || paused}>
               {savingConfig ? t("lint.savingRules") : t("lint.saveRules")}
             </Button>
           </div>
         </div>
       )}
+
+      <div className="shrink-0 space-y-2 border-b px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <select aria-label={t("lint.filterType")} value={filters.type} onChange={(event) => changeFilter({ type: event.target.value })}
+            className="h-8 rounded-md border bg-background px-2">
+            <option value="">{t("lint.allTypes")} ({filterLintItems(items, { ...filters, type: "" }, catalog, moduleIndex).length})</option>
+            {Object.entries(typeConfig).map(([type, config]) => <option key={type} value={type}>{config.label} ({filterLintItems(items, { ...filters, type }, catalog, moduleIndex).length})</option>)}
+          </select>
+          <select aria-label={t("lint.filterModule")} value={filters.moduleId} disabled={modulesLoading || !catalog}
+            onChange={(event) => changeFilter({ moduleId: event.target.value })} className="h-8 max-w-64 rounded-md border bg-background px-2">
+            <option value="">{t("lint.allModules")} ({filterLintItems(items, { ...filters, moduleId: "" }, catalog, moduleIndex).length})</option>
+            {moduleOptions.map((module) => <option key={module.id} value={module.id}>{module.label} ({filterLintItems(items, { ...filters, moduleId: module.id }, catalog, moduleIndex).length})</option>)}
+          </select>
+          <input type="search" aria-label={t("lint.searchIssues")} placeholder={t("lint.searchIssues")} value={filters.query}
+            onChange={(event) => changeFilter({ query: event.target.value })} className="h-8 min-w-44 flex-1 rounded-md border bg-background px-2" />
+          <span className="text-muted-foreground">{t("lint.filteredCount", { count: visibleItems.length, total: items.length })}</span>
+        </div>
+        {moduleError && <p role="alert" className="text-xs text-destructive">{moduleError}</p>}
+      </div>
 
       {items.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
@@ -559,7 +624,7 @@ export function LintView() {
               checked={allLintSelected}
               onChange={toggleAllLint}
             />
-            {t("lint.selectAll")}
+            {t("lint.selectVisible")}
           </label>
           <span className="text-muted-foreground">
             {t("lint.selectedCount", { count: selectedLintItems.length })}
@@ -595,6 +660,7 @@ export function LintView() {
       )}
 
       <div className="flex-1 overflow-y-auto">
+        {checkError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{checkError}</p>}
         {fixError && (
           <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {t("lint.fixFailed", { error: fixError })}
@@ -606,7 +672,7 @@ export function LintView() {
             <p>{t("lint.runLintHint")}</p>
             <p className="text-xs">{t("lint.runLintDescription")}</p>
           </div>
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && !checkError && !running && !paused ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-emerald-500/60" />
             <p className="text-emerald-600 dark:text-emerald-400 font-medium">{t("lint.allClear")}</p>
@@ -614,6 +680,7 @@ export function LintView() {
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
+            {(items.length > 0 || running) && visibleItems.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{t(running ? "lint.awaitingIssues" : "lint.noMatchingIssues")}</p>}
             {warnings.length > 0 && (
               <SectionHeader icon={AlertTriangle} label={t("lint.warnings")} count={warnings.length} color="text-amber-500" t={t} />
             )}

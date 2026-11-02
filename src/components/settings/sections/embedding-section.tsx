@@ -118,14 +118,18 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     void refreshStats()
   }, [refreshStats])
 
-  const handleReindex = useCallback(async () => {
+  useEffect(() => {
+    if (reindex.kind === "done" || reindex.kind === "error") void refreshStats()
+  }, [sharedReindex, refreshStats])
+
+  const handleReindex = useCallback(async (clearExisting = false) => {
     if (!project) return
     try {
       await embedAllPages(
         project.path,
         embeddingConfig,
         undefined,
-        { clearExisting: true },
+        { clearExisting },
       )
       await refreshStats()
     } catch (err) {
@@ -425,11 +429,12 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               {t("settings.sections.embedding.chunkCount", { count: chunkCount ?? 0 })}
             </p>
 
+            <p className="text-xs text-muted-foreground">{t("settings.sections.embedding.syncHint")}</p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleReindex}
+                onClick={() => void handleReindex()}
                 disabled={reindex.kind === "running" || !project}
               >
                 {reindex.kind === "running"
@@ -437,7 +442,12 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                       done: reindex.done,
                       total: reindex.total,
                     })
-                  : t("settings.sections.embedding.reindexAll")}
+                  : t("settings.sections.embedding.syncIndex")}
+              </Button>
+
+              <Button variant="outline" size="sm" onClick={() => void handleReindex(true)}
+                disabled={reindex.kind === "running" || !project}>
+                {t("settings.sections.embedding.reindexAll")}
               </Button>
 
               {legacyCount > 0 && (
@@ -454,7 +464,9 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
 
             {reindex.kind === "done" && (
               <p className="text-xs text-muted-foreground">
-                {t("settings.sections.embedding.reindexDone", { count: reindex.count })}
+                {reindex.skipped !== undefined
+                  ? t("settings.sections.embedding.syncDone", { count: reindex.count, removed: reindex.removed ?? 0, skipped: reindex.skipped })
+                  : t("settings.sections.embedding.reindexDone", { count: reindex.count })}
               </p>
             )}
 

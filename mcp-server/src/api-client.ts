@@ -54,6 +54,39 @@ export interface ApiPageWriteResult {
   existedBefore: boolean
 }
 
+export interface ApiPageListResult {
+  pages: Array<{ path: string; bytes: number }>
+  total: number
+  offset: number
+  nextOffset: number | null
+  truncated: boolean
+  snapshot: string
+}
+
+export interface ApiSourceReadOptions {
+  startLine?: number; endLine?: number; startColumn?: number; maxChars?: number; revision?: string
+}
+
+export interface ApiSourceReadResult {
+  path: string; content: string; revision: string; totalLines: number
+  startLine: number; startColumn: number; endLine: number
+  nextStartLine: number | null; nextStartColumn: number | null
+  truncated: boolean; representation: string
+}
+
+export interface ApiPageMoveResult {
+  fromPath: string; toPath: string; rewrittenPaths: string[]
+  indexingPendingPaths: string[]; warnings: string[]; verified: boolean
+}
+
+export interface ApiPageDeleteResult {
+  deletedPaths: string[]
+  rewrittenPaths: string[]
+  rewrittenFiles: number
+  warnings: string[]
+  verified: boolean
+}
+
 export interface ApiChatReference {
   title: string
   path: string
@@ -123,6 +156,16 @@ export type ApiReviewStatus = "unresolved" | "resolved" | "all"
 export interface ApiReviewOption {
   label: string
   action: string
+  kind?: string
+}
+
+export interface ApiReviewEvidence {
+  path: string
+  revision: string
+  text: string
+  startLine: number
+  endLine: number
+  snapshot?: { runId: string; side: string }
 }
 
 export interface ApiReviewItem {
@@ -137,6 +180,15 @@ export interface ApiReviewItem {
   resolved: boolean
   resolvedAction?: string
   createdAt: number
+  schemaVersion?: number
+  subtype?: string
+  evidenceVersion?: string
+  runIds?: string[]
+  historical?: boolean
+  hidden?: boolean
+  outcome?: string
+  risk?: string
+  evidence?: ApiReviewEvidence[]
 }
 
 export interface ApiReviewsResponse {
@@ -197,6 +249,16 @@ function requireNumber(value: unknown, context: string): number {
   return value
 }
 
+function requireBoolean(value: unknown, context: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${context}: expected boolean`)
+  return value
+}
+
+function requireStringArray(value: unknown, context: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${context}: expected string array`)
+  return value
+}
+
 export class LlmWikiApiClient {
   private readonly baseUrl: string
   private readonly token?: string
@@ -231,12 +293,13 @@ export class LlmWikiApiClient {
     }
   }
 
-  async fileContent(projectId = "current", path: string): Promise<{ path: string; content: string }> {
+  async fileContent(projectId = "current", path: string): Promise<{ path: string; content: string; revision?: string }> {
     const params = new URLSearchParams({ path })
     const json = await this.request(`/projects/${encodeURIComponent(projectId)}/files/content?${params.toString()}`)
     return {
       path: typeof json.path === "string" ? json.path : path,
       content: typeof json.content === "string" ? json.content : "",
+      ...(typeof json.revision === "string" ? { revision: json.revision } : {}),
     }
   }
 
@@ -383,6 +446,83 @@ export class LlmWikiApiClient {
     }
   }
 
+  /** 枚举真实页面，保留分页标记和快照供调用方继续核对全部副本。 */
+  async listPages(projectId = "current", options: { prefix?: string; offset?: number; limit?: number; snapshot?: string } = {}): Promise<ApiPageListResult> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(options)) if (value !== undefined) params.set(key, String(value))
+    const query = params.toString()
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/pages${query ? `?${query}` : ""}`)
+    const result = requireObject(json.result, "page list result")
+    if (!Array.isArray(result.pages)) throw new Error("page list result.pages: expected array")
+    const output: ApiPageListResult = {
+      pages: result.pages.map((value) => {
+        const page = requireObject(value, "page list entry")
+        return { path: requireString(page.path, "page path"), bytes: requireNumber(page.bytes, "page bytes") }
+      }),
+      total: requireNumber(result.total, "page list total"), offset: requireNumber(result.offset, "page list offset"),
+      nextOffset: result.nextOffset === null ? null : requireNumber(result.nextOffset, "page list nextOffset"),
+      truncated: requireBoolean(result.truncated, "page list truncated"), snapshot: requireString(result.snapshot, "page list snapshot"),
+    }
+    const end = output.offset + output.pages.length
+    const next = end < output.total ? end : null
+    if (!Number.isInteger(output.total) || output.total < end || output.nextOffset !== next || output.truncated !== (next !== null)
+      || (output.truncated && output.pages.length === 0)) throw new Error("page list result: inconsistent pagination")
+    return output
+  }
+
+  /** 来源读取保留原文、范围和接续位置，不能把片段误报成全部正文。 */
+  async readSource(path: string, projectId = "current", options: ApiSourceReadOptions = {}): Promise<ApiSourceReadResult> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/sources/read`, { method: "POST", body: { path, ...options } })
+    const result = requireObject(json.result, "source read result")
+    if (typeof result.content !== "string") throw new Error("source read result.content: expected string")
+    const output: ApiSourceReadResult = {
+      path: requireString(result.path, "source path"), content: result.content, revision: requireString(result.revision, "source revision"),
+      totalLines: requireNumber(result.totalLines, "source totalLines"), startLine: requireNumber(result.startLine, "source startLine"),
+      startColumn: requireNumber(result.startColumn, "source startColumn"), endLine: requireNumber(result.endLine, "source endLine"),
+      nextStartLine: result.nextStartLine === null ? null : requireNumber(result.nextStartLine, "source nextStartLine"),
+      nextStartColumn: result.nextStartColumn === null ? null : requireNumber(result.nextStartColumn, "source nextStartColumn"),
+      truncated: requireBoolean(result.truncated, "source truncated"), representation: requireString(result.representation, "source representation"),
+    }
+    if (output.path !== path || (output.nextStartLine === null) !== (output.nextStartColumn === null)
+      || output.truncated !== (output.nextStartLine !== null)) throw new Error("source read result: inconsistent identity or continuation")
+    return output
+  }
+
+  /** 目标不覆盖，服务端负责引用迁移与索引核对。 */
+  async movePage(path: string, toPath: string, projectId = "current", expectedRevision?: string): Promise<ApiPageMoveResult> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/pages/move`, { method: "POST", body: { path, toPath, expectedRevision } })
+    const result = requireObject(json.result, "page move result")
+    if (result.verified !== true || result.fromPath !== path || result.toPath !== toPath) throw new Error("page move result: movement was not verified")
+    return {
+      fromPath: path, toPath, rewrittenPaths: requireStringArray(result.rewrittenPaths, "move rewrittenPaths"),
+      indexingPendingPaths: requireStringArray(result.indexingPendingPaths, "move indexingPendingPaths"),
+      warnings: requireStringArray(result.warnings, "move warnings"), verified: true,
+    }
+  }
+
+  /** 使用统一删除生命周期；调用方须先核对页面及用户授权。 */
+  async deletePage(path: string, projectId = "current"): Promise<ApiPageDeleteResult> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/pages/delete`, {
+      method: "POST", body: { path },
+    })
+    const result = requireObject(json.result, "page delete result")
+    if (result.verified !== true || !Array.isArray(result.deletedPaths) || !result.deletedPaths.includes(path)) {
+      throw new Error("page delete result: deletion was not verified")
+    }
+    const strings = (value: unknown, field: string): string[] => {
+      if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+        throw new Error(`page delete result.${field}: expected string array`)
+      }
+      return value
+    }
+    return {
+      deletedPaths: strings(result.deletedPaths, "deletedPaths"),
+      rewrittenPaths: strings(result.rewrittenPaths, "rewrittenPaths"),
+      rewrittenFiles: requireNumber(result.rewrittenFiles, "page delete result.rewrittenFiles"),
+      warnings: strings(result.warnings, "warnings"), verified: true,
+    }
+  }
+
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`
     const headers: Record<string, string> = { Accept: "application/json" }
@@ -515,11 +655,24 @@ function parseReviewItem(value: unknown): ApiReviewItem {
     searchQueries: stringArray(obj.searchQueries),
     options: Array.isArray(obj.options) ? obj.options.map((option) => {
       const item = requireObject(option, "review option")
-      return { label: String(item.label ?? ""), action: String(item.action ?? "") }
+      return { label: String(item.label ?? ""), action: String(item.action ?? ""), ...(typeof item.kind === "string" ? { kind: item.kind } : {}) }
     }) : [],
     resolved: obj.resolved === true,
     resolvedAction: typeof obj.resolvedAction === "string" ? obj.resolvedAction : undefined,
     createdAt: numberOrUndefined(obj.createdAt) ?? 0,
+    schemaVersion: numberOrUndefined(obj.schemaVersion),
+    subtype: typeof obj.subtype === "string" ? obj.subtype : undefined,
+    evidenceVersion: typeof obj.evidenceVersion === "string" ? obj.evidenceVersion : undefined,
+    runIds: stringArray(obj.runIds),
+    historical: obj.historical === true,
+    hidden: obj.hidden === true,
+    outcome: typeof obj.outcome === "string" ? obj.outcome : undefined,
+    risk: typeof obj.risk === "string" ? obj.risk : undefined,
+    evidence: Array.isArray(obj.evidence) ? obj.evidence.map((value) => {
+      const evidence = requireObject(value, "review evidence")
+      const snapshot = evidence.snapshot && typeof evidence.snapshot === "object" ? evidence.snapshot as Record<string, unknown> : undefined
+      return { path: String(evidence.path ?? ""), revision: String(evidence.revision ?? ""), text: String(evidence.text ?? ""), startLine: numberOrUndefined(evidence.startLine) ?? 1, endLine: numberOrUndefined(evidence.endLine) ?? 1, ...(snapshot ? { snapshot: { runId: String(snapshot.runId ?? ""), side: String(snapshot.side ?? "") } } : {}) }
+    }) : undefined,
   }
 }
 

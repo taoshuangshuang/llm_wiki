@@ -99,7 +99,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           status: { type: "string", enum: ["unresolved", "resolved", "all"], description: "Review status filter. Defaults to unresolved." },
-          type: { type: "string", description: "Optional Review item type filter, for example missing-page, duplicate, contradiction, confirm, suggestion, structure, or coverage." },
+          type: { type: "string", description: "Optional Review item type filter: merge, contradiction, coverage, structure, missing-page, duplicate, suggestion; suggestion represents necessary knowledge supplementation; missing-page and confirm remain available for history." },
           limit: { type: "number", description: "Maximum review items returned. The local API clamps to its configured maximum." },
         },
         additionalProperties: false,
@@ -187,6 +187,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "llm_wiki_list_pages",
+      description: "按路径前缀列出真实 Wiki 页面。使用返回的 nextOffset 作为 offset 并携带 snapshot 续页，truncated=false 才列举完毕；不能把搜索结果当作全部重复副本。",
+      inputSchema: { type: "object", properties: {
+        project_id: { type: "string" }, prefix: { type: "string", description: "默认 wiki/，支持文件名前缀。" },
+        offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 500 }, snapshot: { type: "string" },
+      }, additionalProperties: false },
+    },
+    {
+      name: "llm_wiki_read_source",
+      description: "精确读取 raw/sources/ 原文或最新提取正文，返回原始换行、行列范围和 revision。长文依 nextStartLine/nextStartColumn 接续并传同一 revision；过期或缺失的二进制提取正文会明确失败。",
+      inputSchema: { type: "object", properties: {
+        project_id: { type: "string" }, path: { type: "string" }, start_line: { type: "integer", minimum: 1 },
+        end_line: { type: "integer", minimum: 1 }, start_column: { type: "integer", minimum: 1 },
+        max_chars: { type: "integer", minimum: 1, maximum: 12000 }, revision: { type: "string" },
+      }, required: ["path"], additionalProperties: false },
+    },
+    {
+      name: "llm_wiki_move_page",
+      description: "移动或重命名用户明确授权的 Wiki 页面，同步迁移链接、related、相对资源和索引。先读精确源页，建议传 expected_revision；目标存在则拒绝覆盖。如实报告 warnings 和 indexingPendingPaths，不自动关闭审阅项。",
+      inputSchema: { type: "object", properties: {
+        project_id: { type: "string" }, path: { type: "string" }, to_path: { type: "string" }, expected_revision: { type: "string" },
+      }, required: ["path", "to_path"], additionalProperties: false },
+    },
+    {
+      name: "llm_wiki_delete_page",
+      description: "删除用户明确要求移除的 Wiki Markdown 页面，清理正文链接、related、目录和旧索引。先读取精确页面并核实保留内容已合并；重要档案沿用人工审核。返回实际删除路径和清理警告，不自动解决审阅项。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'." },
+          path: { type: "string", description: "已读取核对的项目相对 Markdown 路径，例如 wiki/concepts/duplicate.md。" },
+        },
+        required: ["path"], additionalProperties: false,
+      },
+    },
+    {
       name: "llm_wiki_write_page",
       description: "Create or explicitly overwrite one Markdown page under wiki/. Success is returned only after byte-for-byte persistence verification.",
       inputSchema: {
@@ -245,8 +281,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await assertMcpEnabled()
         const relPath = stringArg(args.path, "path")
         const scope = await resolveProjectScope(args)
-        const { path, content } = await client.fileContent(scope.id, relPath)
-        return textResult(withActiveProject(`# ${path}\n\n${truncateText(content, MAX_TEXT_BYTES)}`, scope.project, scope.id))
+        const { path, content, revision } = await client.fileContent(scope.id, relPath)
+        return textResult(withActiveProject(`# ${path}${revision ? `\nrevision: ${revision}` : ""}\n\n${truncateText(content, MAX_TEXT_BYTES)}`, scope.project, scope.id))
       }
       case "llm_wiki_reviews": {
         await assertMcpEnabled()
@@ -309,6 +345,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const path = stringArg(args.path, "path")
         const scope = await resolveProjectScope(args)
         const result = await client.embedPage(path, scope.id, boolArg(args.force, false))
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_list_pages": {
+        await assertMcpEnabled()
+        const scope = await resolveProjectScope(args)
+        const result = await client.listPages(scope.id, {
+          prefix: optionalStringArg(args.prefix), offset: numberArg(args.offset), limit: numberArg(args.limit), snapshot: optionalStringArg(args.snapshot),
+        })
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_read_source": {
+        await assertMcpEnabled()
+        const path = sourceReadPathArg(args.path)
+        const scope = await resolveProjectScope(args)
+        const result = await client.readSource(path, scope.id, {
+          startLine: numberArg(args.start_line), endLine: numberArg(args.end_line), startColumn: numberArg(args.start_column),
+          maxChars: numberArg(args.max_chars), revision: optionalStringArg(args.revision),
+        })
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_move_page": {
+        await assertMcpEnabled()
+        const path = wikiWritePathArg(args.path)
+        const toPath = wikiWritePathArg(args.to_path)
+        const scope = await resolveProjectScope(args)
+        const result = await client.movePage(path, toPath, scope.id, optionalStringArg(args.expected_revision))
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_delete_page": {
+        await assertMcpEnabled()
+        const path = wikiWritePathArg(args.path)
+        const scope = await resolveProjectScope(args)
+        const result = await client.deletePage(path, scope.id)
         return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
       }
       case "llm_wiki_write_page": {
@@ -399,6 +468,15 @@ function wikiWritePathArg(value: unknown): string {
   const segments = path.split("/")
   if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.startsWith("."))) {
     throw new McpError(ErrorCode.InvalidParams, "path contains a noncanonical component")
+  }
+  return path
+}
+
+function sourceReadPathArg(value: unknown): string {
+  const path = stringArg(value, "path")
+  if (Buffer.byteLength(path, "utf8") > 4096 || !path.startsWith("raw/sources/") || path.includes("\\")
+    || path.split("/").some((part) => !part || part.startsWith(".") || part.includes(":"))) {
+    throw new McpError(ErrorCode.InvalidParams, "path must be a canonical public file under raw/sources/")
   }
   return path
 }
@@ -538,6 +616,16 @@ function formatReviews(response: ApiReviewsResponse): string {
     lines.push(`ID: ${review.id}`)
     lines.push(`Type: ${review.type}`)
     lines.push(`Resolved: ${review.resolved ? "yes" : "no"}`)
+    if (review.subtype) lines.push(`Subtype: ${review.subtype}`)
+    if (review.historical) lines.push("Historical evidence: yes")
+    if (review.hidden) lines.push("Cleared from visible history: yes")
+    if (review.runIds?.length) lines.push(`Runs: ${review.runIds.join(", ")}`)
+    if (review.evidenceVersion) lines.push(`Evidence version: ${review.evidenceVersion}`)
+    if (review.outcome) lines.push(`Actual outcome: ${review.outcome}`)
+    if (review.risk) lines.push(`Risk: ${review.risk}`)
+    for (const evidence of review.evidence ?? []) {
+      lines.push(`Evidence: ${evidence.path}:${evidence.startLine}-${evidence.endLine} @ ${evidence.revision}${evidence.snapshot ? ` (run ${evidence.snapshot.runId}, ${evidence.snapshot.side})` : ""}\n${evidence.text}`)
+    }
     if (review.sourcePath) lines.push(`Source: ${review.sourcePath}`)
     if (review.affectedPages && review.affectedPages.length > 0) {
       lines.push(`Affected pages: ${review.affectedPages.join(", ")}`)

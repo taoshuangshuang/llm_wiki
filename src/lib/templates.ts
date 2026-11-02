@@ -10,7 +10,6 @@ export interface WikiTemplate {
 
 const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | Named things (people, tools, organizations, datasets) |
 | concept | wiki/concepts/ | Ideas, techniques, phenomena, frameworks |
-| source | wiki/sources/ | Papers, articles, talks, books, blog posts |
 | query | wiki/queries/ | Open questions under active investigation |
 | comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
 | synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
@@ -19,28 +18,19 @@ const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | Named things (people, too
 const BASE_NAMING = `- Files: \`kebab-case.md\`
 - Entities: match official name where possible (e.g., \`openai.md\`, \`gpt-4.md\`)
 - Concepts: descriptive noun phrases (e.g., \`chain-of-thought.md\`)
-- Sources: \`author-year-slug.md\` (e.g., \`wei-2022-cot.md\`)
 - Queries: question as slug (e.g., \`does-scale-improve-reasoning.md\`)`
 
 const BASE_FRONTMATTER = `All pages must include YAML frontmatter:
 
 \`\`\`yaml
 ---
-type: entity | concept | source | query | comparison | synthesis | overview
+type: entity | concept | query | comparison | synthesis | overview
 title: Human-readable title
 tags: []
 related: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
-\`\`\`
-
-Source pages also include:
-\`\`\`yaml
-authors: []
-year: YYYY
-url: ""
-venue: ""
 \`\`\``
 
 const BASE_INDEX_FORMAT = `\`wiki/index.md\` lists all pages grouped by type. Each entry:

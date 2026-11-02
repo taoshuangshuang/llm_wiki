@@ -2,6 +2,13 @@ import yaml from "js-yaml"
 
 export type FrontmatterValue = string | string[]
 
+/** 页面标题单独用于候选召回；缺少元信息时回退到正文一级标题，不将整段正文充作标题。 */
+export function extractPageTitle(content: string): string | undefined {
+  const { frontmatter, body } = parseFrontmatter(content)
+  const title = frontmatter?.title
+  return (typeof title === "string" ? title.trim() : "") || body.match(/^#\s+(.+)$/m)?.[1].trim() || undefined
+}
+
 export interface FrontmatterParseResult {
   frontmatter: Record<string, FrontmatterValue> | null
   body: string

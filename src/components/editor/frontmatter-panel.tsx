@@ -73,6 +73,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
   const sourcesRoot = projectPath ? `${projectPath}/raw/sources` : null
 
   const typeStyle = getWikiTypeStyle(type)
+  const typeLabel = t(`sidebar.typeLabels.${type}`, { defaultValue: typeStyle.label })
   const TypeIcon = typeStyle.icon
 
   const hasIdentity = title || type || tags.length > 0 || created
@@ -98,7 +99,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
       <div className="flex items-start gap-3 px-4 pt-4">
         <div
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${typeStyle.chipClass}`}
-          title={typeStyle.label}
+          title={typeLabel}
         >
           <TypeIcon className="h-5 w-5" />
         </div>
@@ -113,7 +114,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
               <span
                 className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wide ${typeStyle.chipClass}`}
               >
-                {typeStyle.label}
+                {typeLabel}
               </span>
             )}
             {created && (

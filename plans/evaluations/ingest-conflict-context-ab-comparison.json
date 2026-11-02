@@ -1,0 +1,17 @@
+{
+  "对照说明": "同一模型、系统提示词、引文和采样参数，仅为 with-context 变体补全已消费的材料。",
+  "results": [
+    {
+      "variant": "baseline",
+      "seconds": 13.49,
+      "output": "{\"incomplete\":true}\n\n无法核实：第一条主张涉及 mdd_table_version_4 / ypd_table_version_2，第二条提到 mdd_table_version_5 / ypd_table_version_3，但没有逐字证据表明这两组版本标识指向同一对象、同一维度表或同一适用范围。版本标识可能对应不同的配置水平/枚举值，因此不能据此推断冲突，也无法确认同一性。",
+      "finishReason": "stop"
+    },
+    {
+      "variant": "with-context",
+      "seconds": 9.37,
+      "output": "{\"sameSubject\":true,\"sameVersion\":true,\"sameConditions\":true,\"incompatible\":true,\"explainedDifference\":false}\n\n说明：同一段文档内，实验设计说明称因素2的“特定版本”为 mdd_table_version_4 和 ypd_table_version_2，而因素水平表列出两组特定版本（另含 mdd_table_version_5/ypd_table_version_3），且组合数算式按2水平计算。来源自身已标注该不一致但未给出解释（待审阅），故 explainedDifference=false。",
+      "finishReason": "stop"
+    }
+  ]
+}

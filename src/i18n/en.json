@@ -13,6 +13,8 @@
     "rejected": "Rejected",
     "history": "Review history",
     "refresh": "Refresh",
+    "move": "Move to {{path}}",
+    "moveHint": "Move the page and update references and relative asset paths. An existing destination will not be overwritten.",
     "modify": "Modify",
     "delete": "Delete file",
     "diffHint": "Red strikethrough indicates removal; green indicates additions.",
@@ -26,11 +28,24 @@
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
   "common": {
-    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close", "ok": "OK", "confirm": "Confirm", "notice": "Notice",
-    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "ignore": "Ignore",
+    "close": "Close",
+    "ok": "OK",
+    "confirm": "Confirm",
+    "notice": "Notice",
+    "dismiss": "Dismiss",
+    "loading": "Loading...",
+    "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
-  "errors": { "generic": "Something went wrong" },
+  "layout": {
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar"
+  },
+  "errors": {
+    "generic": "Something went wrong"
+  },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",
     "showDetails": "Show parser details",
@@ -39,6 +54,7 @@
     "diagram": "Diagram"
   },
   "nav": {
+    "imports": "Import process",
     "chat": "Chat",
     "wiki": "Wiki",
     "sources": "Sources",
@@ -51,7 +67,9 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
-    "updateAvailableSuffix": " · update"
+    "updateAvailableSuffix": " · update",
+    "workflow": "Knowledge workflow",
+    "browseSearch": "Browse & Search"
   },
   "updateBanner": {
     "message": "Version {{version}} is available",
@@ -66,7 +84,7 @@
   "sidebar": {
     "businessModules": "Business",
     "moduleLoading": "Loading modules…",
-    "moduleSetup": "Add a Business Modules section with a JSON module dictionary to schema.md.",
+    "moduleSetup": "Add a Business Modules section with a JSON module dictionary to business-modules.md. Legacy sections in schema.md are also supported.",
     "moduleEmpty": "No pages in this module.",
     "moduleUnreadable": "Could not read {{count}} wiki entries.",
     "knowledge": "Knowledge",
@@ -76,10 +94,16 @@
     "allSources": "All sources",
     "noWikiPages": "No wiki pages yet. Import sources to get started.",
     "typeLabels": {
-      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
-      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
-      "thesis": "Theses", "methodology": "Methodologies",
-      "comparison": "Comparisons", "query": "Queries"
+      "overview": "Overview",
+      "entity": "Entities",
+      "concept": "Concepts",
+      "source": "Sources",
+      "synthesis": "Synthesis",
+      "finding": "Findings",
+      "thesis": "Theses",
+      "methodology": "Methodologies",
+      "comparison": "Comparisons",
+      "query": "Queries"
     }
   },
   "editor": {
@@ -121,34 +145,11 @@
       "createFailed": "The missing page could not be created.",
       "emptyDraftError": "The model returned an empty draft."
     },
-    "frontmatter": { "origin": "Origin", "more": "More" },
+    "frontmatter": {
+      "origin": "Origin",
+      "more": "More"
+    },
     "rawMarkdownEditor": "Raw Markdown editor"
-  },
-  "research": {
-    "title": "Deep Research",
-    "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
-    "activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
-    "inputPlaceholder": "Enter a research topic...",
-    "emptyTitle": "No research tasks yet",
-    "emptyHint": "Enter a topic above or click Deep Research in Review",
-    "sourcesCount": "Sources ({{count}})",
-    "anyTxtSource": "AnyTXT source",
-    "webSource": "Web source",
-    "synthesis": "Synthesis",
-    "thinking": "Thinking",
-    "open": "Open",
-    "retry": "Retry",
-    "rerun": "Run again",
-    "remove": "Remove",
-    "status": {
-      "queued": "Queued",
-      "searching": "Searching sources...",
-      "synthesizing": "Synthesizing...",
-      "saving": "Saving to wiki...",
-      "saved": "Saved",
-      "done": "Done",
-      "failed": "Failed"
-    }
   },
   "project": {
     "createTitle": "Create New Wiki Project",
@@ -166,7 +167,7 @@
     "requiredMarker": "*",
     "browse": "Select Parent Directory",
     "aiOutputLanguage": "AI Output Language",
-    "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Settings → Output.",
+    "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Knowledge workflow → Output.",
     "pickLanguage": "Pick a language…"
   },
   "templates": {
@@ -268,6 +269,7 @@
       "applying": "Applying..."
     },
     "agentChanges": {
+      "deleted": "Page deleted; reference cleanup is reported in the tool result.",
       "title": "Agent file changes",
       "taskTitle": "Agent activity",
       "fileCount": "{{count}} file",
@@ -419,6 +421,30 @@
     "startSearching": "Type to search wiki pages"
   },
   "lint": {
+    "awaitingIssues": "Check still running. No matching findings received yet.",
+    "pause": "Pause",
+    "pausing": "Pausing…",
+    "paused": "Paused",
+    "resume": "Continue check",
+    "resumeHint": "Continue skips completed batches and restarts unfinished batches using the current files. Saved page changes are kept.",
+    "finished": "Check finished",
+    "structuralPhase": "Structural check",
+    "semanticPhase": "Business module check",
+    "batchProgress": "Processed {{completed}} / {{total}} batches",
+    "pageProgress": "Processed {{completed}} / {{total}} steps",
+    "progress": "Check progress",
+    "filterType": "Issue type",
+    "allTypes": "All issue types",
+    "filterModule": "Business module",
+    "allModules": "All business modules",
+    "searchIssues": "Search pages or issues",
+    "filteredCount": "Showing {{count}} / {{total}} issues",
+    "selectVisible": "Select current results",
+    "noMatchingIssues": "No issues match these filters",
+    "preparingSemantic": "Preparing module checks…",
+    "semanticDescription": "Check format, conflicts, duplicates and knowledge gaps by module. Eligible format and duplicate issues are repaired automatically; old paths remain as reference pages. Unresolved issues go to Review.",
+    "checkIncomplete": "The check did not complete. See the reported reasons.",
+    "checkNeedsModel": "Semantic checks require a usable model configuration.",
     "title": "Wiki Lint",
     "semantic": "Semantic (LLM)",
     "ruleSettings": "Lint rules",
@@ -463,12 +489,17 @@
       "orphan": "Orphan Page",
       "broken-link": "Broken Link",
       "no-outlinks": "No Outbound Links",
+      "structure": "Format and Structure",
       "semantic": "Semantic Issue"
     },
     "issues": "{{count}} issue",
     "issues_plural": "{{count}} issues"
   },
   "review": {
+    "importance": "Review importance",
+    "important": "Important",
+    "optional": "Non-important",
+    "categoryClear": "No review items in this category",
     "title": "Review",
     "clearResolved": "Clear resolved",
     "refresh": "Refresh",
@@ -493,18 +524,19 @@
     "pendingStatus": "Pending review",
     "removedStatus": "Review removed",
     "resolvedFromConversation": "Confirmed resolved in review conversation ({{id}})",
-    "conversationHint": "Check evidence first. Wiki changes require your explicit instruction. You confirm when the review is resolved.",
+    "conversationHint": "Clear answers or confirmed choices update the relevant pages without another confirmation. You confirm when the review is resolved.",
     "conversationEmpty": "Enter a question, add evidence, or explain how to handle this review.",
     "starters": {
       "title": "Confirm the specific conclusions for this review",
-      "hint": "You can also add other conclusions, conditions, or evidence below.",
+      "hint": "Confirmed conclusions will update the relevant pages directly; uncertain parts will be checked first. You can also add comments below.",
       "loading": "Checking whether this review needs choices…",
       "failed": "Could not generate choices. Retry or type your answer below.",
       "uncertain": "Not sure yet; check the evidence first",
       "submit": "Confirm choices and continue",
-      "message": "These are my choices for this review. Check the evidence and propose specific next steps. Do not edit pages or resolve the review yet."
+      "message": "These are my answers for this review. Apply clear conclusions or handling choices directly to the relevant Wiki pages without asking again or only proposing next steps. Check parts marked 'Not sure yet; check the evidence first' without treating them as confirmed. Ask only about missing information that affects the edits. Preserve unrelated content and source citations, briefly report the pages actually changed, and do not automatically resolve the review."
     },
     "types": {
+      "merge": "Merge issue",
       "contradiction": "Contradiction",
       "duplicate": "Duplicate",
       "missing-page": "Missing page",
@@ -590,7 +622,7 @@
           "activeDefault": "Use active model",
           "hint": "Choose separate models for interactive chat and document ingest. The active model remains the fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Use a project-specific model",
           "provider": "Project provider",
           "selectProvider": "Select a provider",
@@ -676,7 +708,6 @@
           "max": "Max",
           "custom": "Custom",
           "budgetTokens": "thinking budget tokens",
-
           "hint": "Controls reasoning for chat. Document ingest uses the separate setting below.",
           "ingestTitle": "Reasoning during ingest",
           "ingestHint": "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled."
@@ -715,6 +746,9 @@
         "statsHeading": "Index status",
         "chunkCount": "{{count}} chunks indexed",
         "lastErrorHeading": "Last embedding error",
+        "syncIndex": "Sync index",
+        "syncDone": "Updated {{count}} pages, removed {{removed}}, skipped {{skipped}}.",
+        "syncHint": "Automatically sync new, changed and deleted pages. Unchanged pages reuse vectors; model or chunking changes require re-indexing.",
         "reindexAll": "Re-index all pages",
         "reindexing": "Indexing {{done}}/{{total}}…",
         "reindexDone": "Indexed {{count}} pages.",
@@ -732,7 +766,7 @@
         "stateOn": "ON",
         "stateOff": "OFF",
         "useMainLabel": "Use main LLM for captions",
-        "useMainHint": "Reuse the model picked under Settings → LLM provider. Only enable this if that model accepts image input — text-only models will return a 400.",
+        "useMainHint": "Reuse the model picked under Knowledge workflow → Common settings → Models. Only enable this if that model accepts image input — text-only models will return a 400.",
         "dedicatedHeading": "Dedicated vision endpoint",
         "provider": "Provider",
         "ollamaUrl": "Ollama URL",
@@ -762,21 +796,16 @@
       "webSearch": {
         "title": "External Information Sources",
         "description": "Configure external information sources that LLM Wiki can use.",
-        "deepResearchSources": "Deep Research source mode",
-        "deepResearchSourcesHint": "Web Search uses the selected online provider. AnyTXT searches local indexed files through ATGUI.exe on this machine.",
-        "sourceWeb": "Web Search",
-        "sourceAnyTxt": "AnyTXT",
-        "sourceBoth": "Both",
         "webProviders": "Web Search providers",
         "anyTxtTitle": "AnyTXT local file search",
-        "anyTxtDescription": "Use AnyTXT's local JSON-RPC API as a Deep Research source. Keep ATGUI.exe running before starting research.",
+        "anyTxtDescription": "Use AnyTXT's local JSON-RPC API as a chat retrieval source. Keep ATGUI.exe running before starting research.",
         "anyTxtEndpoint": "AnyTXT endpoint",
         "anyTxtFilterDir": "Search folder",
         "anyTxtFilterDirPlaceholder": "Leave blank for AnyTXT's default scope; on Windows, set a drive or folder if needed",
         "anyTxtFilterExt": "Extension filter",
         "anyTxtLimit": "Max local results",
         "anyTxtHint": "AnyTXT pattern text is sent directly to AnyTXT, so its native search syntax applies. AnyTXT API is local beta software; respect AnyTXT's usage terms.",
-        "anyTxtBroadDirWarning": "This folder looks very broad. Deep Research may send matching local file fragments, including sensitive content, to the selected LLM.",
+        "anyTxtBroadDirWarning": "This folder looks very broad. chat retrieval may send matching local file fragments, including sensitive content, to the selected LLM.",
         "expand": "Expand",
         "collapse": "Collapse",
         "activate": "Activate",
@@ -826,8 +855,6 @@
         "autoIngest": "Auto-ingest allowed source files",
         "autoIngestDescription": "When disabled, external changes still refresh the file tree but do not create ingest tasks.",
         "persistExtractedMarkdown": "Keep parsed Markdown",
-        "generateSourceSummary": "Generate source summaries (optional)",
-        "generateSourceSummaryDescription": "Disabled by default. Knowledge pages reference original sources and retain images. Enable to add document overview pages. Existing summaries are kept.",
         "persistExtractedMarkdownDescription": "Save extracted document text under raw/parsed using the same folder structure as raw/sources.",
         "parsingConcurrency": "Concurrent document parsers",
         "parsingConcurrencyDescription": "Parse up to this many imported documents at once. PDF parsing remains internally serialized for safety.",
@@ -1140,12 +1167,25 @@
     "fileSync": "File Sync",
     "rescan": "Rescan",
     "rescanTitle": "Scan project files for external changes",
-    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "changeKinds": {
+      "created": "Created",
+      "modified": "Modified",
+      "deleted": "Deleted"
+    },
     "fileTypes": {
-      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
-      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
-      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
-      "index": "Index", "log": "Log", "file": "File"
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "comparison": "Comparison",
+      "finding": "Finding",
+      "thesis": "Thesis",
+      "methodology": "Methodology",
+      "overview": "Overview",
+      "index": "Index",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {
@@ -1205,12 +1245,7 @@
     "lowInternalConnectivity": "Low internal connectivity: {{count}} links per page",
     "surprisingConnections": "Surprising Connections",
     "knowledgeGaps": "Knowledge Gaps",
-    "deepResearch": "Deep Research",
-    "generatingTopic": "Generating research topic...",
-    "researchTopic": "Research Topic",
-    "searchQueries": "Search Queries",
     "cancel": "Cancel",
-    "startResearch": "Start Research",
     "nodeTypeLabels": {
       "entity": "Entity",
       "concept": "Concept",

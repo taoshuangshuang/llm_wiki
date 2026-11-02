@@ -464,7 +464,7 @@ pub async fn vector_upsert_chunks(
     chunks: Vec<ChunkUpsertInput>,
 ) -> Result<(), String> {
     run_guarded_async("vector_upsert_chunks", async move {
-        vector_upsert_chunks_inner(&project_path, &page_id, chunks, None).await
+        vector_upsert_chunks_inner(&project_path, &page_id, chunks, None, None).await
     })
     .await
 }
@@ -474,8 +474,135 @@ pub(crate) async fn vector_upsert_chunks_with_revision(
     page_id: &str,
     chunks: Vec<ChunkUpsertInput>,
     fingerprint: &str,
+    expected_content: &str,
 ) -> Result<(), String> {
-    vector_upsert_chunks_inner(project_path, page_id, chunks, Some(fingerprint)).await
+    vector_upsert_chunks_inner(project_path, page_id, chunks, Some(fingerprint), Some(expected_content)).await
+}
+
+/// 将完整页面向量和内容指纹一同提交，失败时不标记页面已同步。
+#[tauri::command]
+pub async fn vector_upsert_indexed_chunks(
+    project_path: String,
+    page_id: String,
+    chunks: Vec<ChunkUpsertInput>,
+    fingerprint: String,
+    expected_content: Option<String>,
+) -> Result<(), String> {
+    run_guarded_async("vector_upsert_indexed_chunks", async move {
+        vector_upsert_chunks_inner(&project_path, &page_id, chunks, Some(&fingerprint), expected_content.as_deref()).await
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexedPage {
+    page_id: String,
+    fingerprint: Option<String>,
+    chunks: usize,
+    backend_revision: Option<String>,
+}
+
+/// 只读取索引中的页面标识和持久化指纹，不加载向量和正文。
+#[tauri::command]
+pub async fn vector_indexed_pages(
+    project_path: String,
+    cfg: Option<super::search::SearchEmbeddingConfig>,
+) -> Result<Vec<IndexedPage>, String> {
+    run_guarded_async("vector_indexed_pages", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.read().await;
+        let db = connect(&db_path(&project_path)).execute().await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+        let tables = db.table_names().execute().await
+            .map_err(|e| format!("List tables error: {e}"))?;
+        if !tables.contains(&TABLE_V2.to_string()) { return Ok(vec![]); }
+        let table = db.open_table(TABLE_V2).execute().await
+            .map_err(|e| format!("Open table error: {e}"))?;
+        use futures::TryStreamExt;
+        use lancedb::query::Select;
+        let batches: Vec<RecordBatch> = table.query().select(Select::columns(&["page_id"]))
+            .execute().await.map_err(|e| format!("List indexed pages error: {e}"))?
+            .try_collect().await.map_err(|e| format!("Collect indexed pages error: {e}"))?;
+        let mut counts = HashMap::<String, usize>::new();
+        for batch in batches {
+            let ids = batch.column_by_name("page_id")
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                .ok_or_else(|| "Missing page_id column".to_string())?;
+            for id in ids.iter().flatten() { *counts.entry(id.to_string()).or_default() += 1; }
+        }
+        let mut pages: Vec<_> = counts.into_iter().map(|(page_id, chunks)| {
+            let fingerprint = super::page_embedding::load_revision(&project_path, &page_id);
+            let backend_revision = cfg.as_ref().zip(fingerprint.as_deref())
+                .filter(|(_, fingerprint)| !fingerprint.starts_with("ts-v1:"))
+                .and_then(|(cfg, fingerprint)| super::page_embedding::matching_current_backend_revision(
+                    &project_path, &page_id, cfg, fingerprint,
+                ));
+            IndexedPage { fingerprint, page_id, chunks, backend_revision }
+        }).collect();
+        pages.sort_by(|a, b| a.page_id.cmp(&b.page_id));
+        Ok(pages)
+    }).await
+}
+
+/// 清理已删除页面；再次检查磁盘，防止目录快照过期误删仍存在的页面。
+#[tauri::command]
+pub async fn vector_prune_missing_pages(project_path: String, page_ids: Vec<String>) -> Result<usize, String> {
+    run_guarded_async("vector_prune_missing_pages", async move {
+        // 项目根目录不可达时不能把离线磁盘误当成所有页面已删除。
+        let root = std::fs::metadata(&project_path).map_err(|e| format!("Project directory unavailable: {e}"))?;
+        if !root.is_dir() { return Err("Project directory unavailable".to_string()); }
+        let mut removed = 0;
+        for page_id in page_ids {
+            validate_page_id_for_v2(&page_id)?;
+            let path = std::path::Path::new(&project_path).join("wiki").join(format!("{page_id}.md"));
+            let parent = path.parent().ok_or("Invalid wiki path")?;
+            // 扩展名大小写不影响页面身份；读取失败时保留旧索引。
+            let exists = match std::fs::read_dir(parent) {
+                Ok(entries) => {
+                    let mut exists = false;
+                    for entry in entries {
+                        let entry = entry.map_err(|e| format!("Inspect wiki page error: {e}"))?;
+                        let candidate = entry.path();
+                        if candidate.file_stem() == path.file_stem()
+                            && candidate.extension().and_then(|s| s.to_str())
+                                .is_some_and(|s| s.eq_ignore_ascii_case("md")) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    exists
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => return Err(format!("Inspect wiki directory error: {e}")),
+            };
+            if exists { continue; }
+            vector_delete_page(project_path.clone(), page_id).await?;
+            removed += 1;
+        }
+        Ok(removed)
+    }).await
+}
+
+/// 提交前后核对实际正文，避免模型计算期间发生修改或删除后仍标记同步成功。
+fn verify_index_page_content(project_path: &str, page_id: &str, expected: &str) -> Result<(), String> {
+    let relative = std::path::Path::new(page_id);
+    if relative.components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
+        return Err("Invalid wiki page path".to_string());
+    }
+    let path = std::path::Path::new(project_path).join("wiki").join(format!("{page_id}.md"));
+    let parent = path.parent().ok_or("Invalid wiki page path")?;
+    let entries = std::fs::read_dir(parent).map_err(|e| format!("Wiki page changed during indexing: {e}"))?;
+    for entry in entries {
+        let candidate = entry.map_err(|e| format!("Inspect wiki page error: {e}"))?.path();
+        if candidate.file_stem() == path.file_stem() && candidate.extension().and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("md")) {
+            let current = std::fs::read_to_string(candidate).map_err(|e| format!("Read wiki page error: {e}"))?;
+            if current == expected { return Ok(()); }
+            break;
+        }
+    }
+    Err(format!("Wiki page changed during indexing: {page_id}; retry synchronization"))
 }
 
 async fn vector_upsert_chunks_inner(
@@ -483,10 +610,15 @@ async fn vector_upsert_chunks_inner(
     page_id: &str,
     chunks: Vec<ChunkUpsertInput>,
     revision: Option<&str>,
+    expected_content: Option<&str>,
 ) -> Result<(), String> {
     validate_page_id_for_v2(&page_id)?;
     let lock = vectorstore_v2_lock(project_path);
     let _guard = lock.write().await;
+
+    if let Some(content) = expected_content {
+        verify_index_page_content(project_path, page_id, content)?;
+    }
 
     if chunks.is_empty() {
         return Ok(());
@@ -534,6 +666,12 @@ async fn vector_upsert_chunks_inner(
             .map_err(|e| format!("Create table error: {e}"))?;
     }
 
+    if let Some(content) = expected_content {
+        if let Err(error) = verify_index_page_content(project_path, page_id, content) {
+            let _ = super::page_embedding::invalidate_page_revision(project_path, page_id);
+            return Err(error);
+        }
+    }
     if let Some(fingerprint) = revision {
         if let Err(err) = super::page_embedding::save_revision(project_path, page_id, fingerprint) {
             let _ = super::page_embedding::invalidate_page_revision(project_path, page_id);
@@ -695,6 +833,7 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
             .map_err(|e| format!("List tables error: {e}"))?;
 
         if !tables.contains(&TABLE_V2.to_string()) {
+            super::page_embedding::invalidate_page_revision(&project_path, &page_id)?;
             return Ok(());
         }
 
@@ -708,6 +847,8 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
             .delete(&format!("page_id = '{}'", page_id))
             .await
             .map_err(|e| format!("Delete error: {e}"))?;
+
+        super::page_embedding::invalidate_page_revision(&project_path, &page_id)?;
 
         Ok(())
     })
@@ -1042,6 +1183,68 @@ mod tests_v2 {
         let page_id = "source#section";
         assert!(validate_page_id(page_id).is_ok());
         assert!(validate_page_id_for_v2(page_id).is_ok());
+    }
+
+    /// 指纹随完整页面持久化，实际向量被删除或通用写入替换时不再宣称同步。
+    #[tokio::test]
+    async fn v2_incremental_revision_tracks_actual_storage() {
+        let root = tmp_project();
+        let pp = root.to_string_lossy().to_string();
+        std::fs::create_dir_all(root.join("wiki")).unwrap();
+        std::fs::write(root.join("wiki/page.md"), "正文").unwrap();
+        vector_upsert_indexed_chunks(pp.clone(), "page".into(), make_chunks("page", 2, 16),
+            "ts-v1:fingerprint".into(), Some("正文".into())).await.unwrap();
+        let pages = vector_indexed_pages(pp.clone(), None).await.unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].chunks, 2);
+        assert_eq!(pages[0].fingerprint.as_deref(), Some("ts-v1:fingerprint"));
+        // 普通写入没有版本契约，下一次同步必须重新核对。
+        vector_upsert_chunks(pp.clone(), "page".into(), make_chunks("page", 1, 16)).await.unwrap();
+        assert!(vector_indexed_pages(pp.clone(), None).await.unwrap()[0].fingerprint.is_none());
+        vector_delete_page(pp.clone(), "page".into()).await.unwrap();
+        assert!(vector_indexed_pages(pp, None).await.unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 删除和重命名只清理已不存在的旧身份；过期的目录快照不能清理仍存在的文件。
+    #[tokio::test]
+    async fn v2_incremental_prune_rechecks_disk_and_preserves_existing_pages() {
+        let root = tmp_project();
+        let pp = root.to_string_lossy().to_string();
+        std::fs::create_dir_all(root.join("wiki/nested")).unwrap();
+        std::fs::write(root.join("wiki/nested/current.MD"), "正文").unwrap();
+        for id in ["nested/current", "deleted", "old-name"] {
+            vector_upsert_chunks(pp.clone(), id.into(), make_chunks(id, 1, 16)).await.unwrap();
+        }
+        let count = vector_prune_missing_pages(pp.clone(), vec!["nested/current".into(), "deleted".into(), "old-name".into()]).await.unwrap();
+        assert_eq!(count, 2);
+        let pages = vector_indexed_pages(pp, None).await.unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].page_id, "nested/current");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 模型使用的旧正文不得覆盖磁盘新版本，也不得在文件删除后重建幽灵向量。
+    #[tokio::test]
+    async fn v2_incremental_rejects_stale_or_deleted_content_before_writing() {
+        let root = tmp_project();
+        let pp = root.to_string_lossy().to_string();
+        std::fs::create_dir_all(root.join("wiki")).unwrap();
+        std::fs::write(root.join("wiki/page.md"), "当前正文").unwrap();
+        vector_upsert_indexed_chunks(pp.clone(), "page".into(), make_chunks("page", 2, 16),
+            "current".into(), Some("当前正文".into())).await.unwrap();
+        let error = vector_upsert_indexed_chunks(pp.clone(), "page".into(), make_chunks("page", 3, 16),
+            "stale".into(), Some("旧正文".into())).await.unwrap_err();
+        assert!(error.contains("changed during indexing"));
+        let pages = vector_indexed_pages(pp.clone(), None).await.unwrap();
+        assert_eq!(pages[0].fingerprint.as_deref(), Some("current"));
+        assert_eq!(pages[0].chunks, 2);
+        std::fs::remove_file(root.join("wiki/page.md")).unwrap();
+        assert!(vector_upsert_indexed_chunks(pp.clone(), "page".into(), make_chunks("page", 3, 16),
+            "stale".into(), Some("当前正文".into())).await.is_err());
+        vector_prune_missing_pages(pp.clone(), vec!["page".into()]).await.unwrap();
+        assert!(vector_indexed_pages(pp, None).await.unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

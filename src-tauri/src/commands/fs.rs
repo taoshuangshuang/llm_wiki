@@ -1243,6 +1243,7 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
+            let _mutation = crate::mutation::lock()?;
             require_absolute_path("write_file", &path)?;
             let p = Path::new(&path);
             let _approval = super::file_approval::guard_mutation(p, Some(contents.as_bytes()), "write_file")?;
@@ -1256,7 +1257,7 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
                 "baseline",
                 "before.ui.write_file",
             );
-            fs::write(&path, contents)
+            crate::mutation::atomic_write(p, contents.as_bytes())
                 .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
             crate::commands::file_history::record_file_version(p, "human", "ui.write_file");
             file_sync::mark_app_write_path(p);
@@ -1267,12 +1268,73 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     .map_err(|e| format!("write_file blocking task join error: {e}"))?
 }
 
+/// 带预期版本的知识页提交；文件快照由业务日志先行保存，拒绝过期覆盖。
+#[tauri::command]
+pub async fn compare_and_write_file(
+    project_path: String, relative_path: String, expected: Option<String>, contents: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _mutation = crate::mutation::lock()?;
+        let relative = relative_path.replace('\\', "/");
+        if !relative.starts_with("wiki/") || !relative.ends_with(".md") ||
+            relative.split('/').any(|part| part.is_empty() || part == "." || part == ".." || part.contains(':') || part.chars().any(char::is_control)) {
+            return Err("入库页面路径无效".to_string());
+        }
+        let root = fs::canonicalize(&project_path).map_err(|error| error.to_string())?;
+        let target = root.join(&relative);
+        let mut ancestor = target.as_path();
+        while !ancestor.exists() { ancestor = ancestor.parent().ok_or("无法定位页面目录")?; }
+        if !fs::canonicalize(ancestor).map_err(|error| error.to_string())?.starts_with(&root) ||
+            target.symlink_metadata().is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err("入库页面超出项目或指向符号链接".to_string());
+        }
+        let current = match fs::read_to_string(&target) {
+            Ok(value) => Some(value),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        if current != expected { return Err(format!("INGEST_VERSION_CONFLICT: 页面已变化：{relative}")); }
+        let _approval = super::file_approval::guard_mutation(&target, Some(contents.as_bytes()), "ingest.commit")?;
+        file_sync::mark_app_write_path(&target);
+        crate::commands::file_history::record_file_version(&target, "baseline", "before.ingest.commit");
+        crate::mutation::atomic_write(&target, contents.as_bytes())?;
+        crate::commands::file_history::record_file_version(&target, "agent", "ingest.commit");
+        file_sync::mark_app_write_path(&target);
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod ingest_commit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn compare_commit_rejects_stale_versions_and_keeps_current_bytes() {
+        let root = std::env::temp_dir().join(format!("ingest-commit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+        let project = root.to_string_lossy().into_owned();
+        let path = "wiki/concepts/a.md".to_string();
+        compare_and_write_file(project.clone(), path.clone(), None, "第一次写入".into()).await.unwrap();
+        let error = compare_and_write_file(project.clone(), path.clone(), None, "过期覆盖".into()).await.unwrap_err();
+        assert!(error.contains("INGEST_VERSION_CONFLICT"));
+        assert_eq!(fs::read_to_string(root.join(&path)).unwrap(), "第一次写入");
+        super::super::file_approval::save_human_file(root.join(&path).to_string_lossy().into_owned(), "人工编辑".into()).unwrap();
+        assert!(compare_and_write_file(project.clone(), path.clone(), Some("第一次写入".into()), "过期模型响应".into()).await.unwrap_err().contains("INGEST_VERSION_CONFLICT"));
+        assert_eq!(fs::read_to_string(root.join(&path)).unwrap(), "人工编辑");
+        compare_and_write_file(project.clone(), path.clone(), Some("人工编辑".into()), "第二版".into()).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join(&path)).unwrap(), "第二版");
+        assert!(compare_and_write_file(project, "wiki/../../outside.md".into(), None, "逃逸".into()).await.is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 #[tauri::command]
 pub async fn write_file_base64(path: String, base64: String) -> Result<(), String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_base64", || {
+            let _mutation = crate::mutation::lock()?;
             require_absolute_path("write_file_base64", &path)?;
             let bytes = B64
                 .decode(base64.as_bytes())
@@ -1284,7 +1346,7 @@ pub async fn write_file_base64(path: String, base64: String) -> Result<(), Strin
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
             }
             file_sync::mark_app_write_path(p);
-            fs::write(&path, bytes)
+            crate::mutation::atomic_write(p, &bytes)
                 .map_err(|e| format!("Failed to write binary file '{}': {}", path, e))?;
             file_sync::mark_app_write_path(p);
             Ok(())
@@ -1298,6 +1360,7 @@ pub async fn write_file_base64(path: String, base64: String) -> Result<(), Strin
 pub async fn write_file_atomic(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_atomic", || {
+            let _mutation = crate::mutation::lock()?;
             require_absolute_path("write_file_atomic", &path)?;
             let p = Path::new(&path);
             let _approval = super::file_approval::guard_mutation(p, Some(contents.as_bytes()), "write_file_atomic")?;
@@ -1306,37 +1369,9 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
             }
 
-            let file_name = p
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| "llm-wiki-file".to_string());
-            let tmp_path = p.with_file_name(format!(
-                ".{file_name}.{}.tmp",
-                chrono::Utc::now()
-                    .timestamp_nanos_opt()
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
-            ));
-
-            file_sync::mark_app_write_path(&tmp_path);
             file_sync::mark_app_write_path(p);
-            crate::commands::file_history::record_file_version(
-                p,
-                "baseline",
-                "before.ui.write_file_atomic",
-            );
-            fs::write(&tmp_path, contents).map_err(|e| {
-                format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
-            })?;
-
-            fs::rename(&tmp_path, p).map_err(|e| {
-                let _ = fs::remove_file(&tmp_path);
-                format!(
-                    "Failed to move temp file '{}' to '{}': {}",
-                    tmp_path.display(),
-                    path,
-                    e
-                )
-            })?;
+            crate::commands::file_history::record_file_version(p, "baseline", "before.ui.write_file_atomic");
+            crate::mutation::atomic_write(p, contents.as_bytes())?;
             crate::commands::file_history::record_file_version(p, "human", "ui.write_file_atomic");
             file_sync::mark_app_write_path(p);
             Ok(())
@@ -1354,6 +1389,7 @@ fn apply_text_selection_edit_inner(
     suffix: &str,
     replacement: &str,
 ) -> Result<String, String> {
+    let _mutation = crate::mutation::lock()?;
     let project = fs::canonicalize(project_path)
         .map_err(|err| format!("Failed to resolve project path: {err}"))?;
     let file = fs::canonicalize(file_path)
@@ -1380,7 +1416,7 @@ fn apply_text_selection_edit_inner(
         "baseline",
         "before.agent.selection_edit",
     );
-    fs::write(&file, &updated)
+    crate::mutation::atomic_write(&file, updated.as_bytes())
         .map_err(|err| format!("Failed to apply Agent selection edit: {err}"))?;
     crate::commands::file_history::record_file_version(&file, "agent", "agent.selection_edit");
     file_sync::mark_app_write_path(&file);
@@ -1420,6 +1456,7 @@ fn create_missing_wiki_page_inner(
     title: &str,
     content: Option<&str>,
 ) -> Result<String, String> {
+    let _mutation = crate::mutation::lock()?;
     let project = fs::canonicalize(project_path)
         .map_err(|err| format!("Failed to resolve project path: {err}"))?;
     let title = title.trim();
@@ -1664,6 +1701,7 @@ fn build_tree(
 pub async fn copy_file(source: String, destination: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_file", || {
+            let _mutation = crate::mutation::lock()?;
             let dest = Path::new(&destination);
             let _approval = super::file_approval::guard_copy(dest, Path::new(&source))?;
             if let Some(parent) = dest.parent() {
@@ -1721,6 +1759,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
                     if path.is_dir() {
                         copy_recursive(&path, &dest_path, files)?;
                     } else {
+                        let _mutation = crate::mutation::lock()?;
                         let _approval = super::file_approval::guard_copy(&dest_path, &path)?;
                         fs::copy(&path, &dest_path)
                             .map_err(|e| format!("Failed to copy '{}': {}", path.display(), e))?;
@@ -1743,6 +1782,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
 pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
+            let _mutation = crate::mutation::lock()?;
             let p = Path::new(&path);
             let _approval = super::file_approval::guard_mutation(p, None, "delete_file")?;
             file_sync::mark_app_write_path(p);

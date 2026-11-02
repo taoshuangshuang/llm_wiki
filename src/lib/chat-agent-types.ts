@@ -84,7 +84,7 @@ export interface ChatAgentFileChange {
   id: string
   path: string
   tool: string
-  operation: "created" | "modified"
+  operation: "created" | "modified" | "deleted"
   additions: number
   deletions: number
   diff: string

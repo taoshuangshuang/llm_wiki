@@ -264,9 +264,9 @@ function chunkSection(section: Section, opts: ChunkingOptions): Omit<Chunk, "ind
   // further splittable by paragraph/line/sentence rules.
   const atoms = tokenizeAtoms(text)
   const pieces = splitAtomsToPieces(atoms, opts)
-  const sized = sizePieces(pieces, opts)
-  const merged = mergeSmall(sized, opts)
-  const withOverlap = applyOverlap(merged, opts)
+  const sized = sizePieces(pieces, opts, text)
+  const merged = mergeSmall(sized, opts, text)
+  const withOverlap = applyOverlap(merged, opts, text)
 
   // Compute charStart/charEnd for each emitted chunk, marking oversized.
   const out: Omit<Chunk, "index">[] = []
@@ -430,6 +430,7 @@ function recursiveSplit(text: string, baseOffset: number, targetChars: number): 
       continue
     }
     // This paragraph alone is too big — descend to finer separators.
+    let split = false
     for (const [, splitter] of SENTENCE_SPLITTERS) {
       const subs = splitter(chunk)
       if (subs.every((s) => s.length <= targetChars) && subs.length > 1) {
@@ -440,6 +441,7 @@ function recursiveSplit(text: string, baseOffset: number, targetChars: number): 
           subCursor += s.length
         }
         cursor += chunk.length
+        split = true
         break
       }
       // Try descending into the subs that are still too long.
@@ -458,13 +460,15 @@ function recursiveSplit(text: string, baseOffset: number, targetChars: number): 
       if (!anyTooBig && subs.length > 1) {
         out.push(...subOut)
         cursor += chunk.length
+        split = true
         break
       }
       // Otherwise keep trying smaller separators in the next loop iter.
     }
     // If the recursion found no separator small enough, fall through to
     // hard char slicing.
-    if (out.length === 0 || out[out.length - 1].offset + out[out.length - 1].text.length <= cursor) {
+    // 成功按句子或空白切分后不能再硬切；cursor 此时已前进，不能用它判断是否成功。
+    if (!split) {
       let sliceCursor = cursor
       for (let i = 0; i < chunk.length; i += targetChars) {
         const piece = chunk.slice(i, i + targetChars)
@@ -502,7 +506,7 @@ function splitKeepingSep(text: string, sep: RegExp): string[] {
  * oversized indivisible piece gets its own chunk and is flagged via the
  * downstream `oversized` check in chunkSection.
  */
-function sizePieces(pieces: Piece[], opts: ChunkingOptions): Piece[] {
+function sizePieces(pieces: Piece[], opts: ChunkingOptions, source: string): Piece[] {
   const out: Piece[] = []
   let buf = ""
   let bufOffset: number | null = null
@@ -519,15 +523,16 @@ function sizePieces(pieces: Piece[], opts: ChunkingOptions): Piece[] {
       continue
     }
     // Would exceed target?
-    if (buf.length + p.text.length > opts.targetChars && buf.length > 0 && bufOffset !== null) {
+    if (bufOffset !== null && p.offset + p.text.length - bufOffset > opts.targetChars && buf.length > 0) {
       out.push({ text: buf, offset: bufOffset })
       buf = p.text
       bufOffset = p.offset
       continue
     }
     // Accumulate.
-    if (buf.length === 0) bufOffset = p.offset
-    buf += p.text
+    if (bufOffset === null) bufOffset = p.offset
+    // 从原文截取连续范围，保留 atom 之间的空行和空白，确保检索能逐字定位。
+    buf = source.slice(bufOffset, p.offset + p.text.length)
   }
   if (buf.length > 0 && bufOffset !== null) {
     out.push({ text: buf, offset: bufOffset })
@@ -542,7 +547,7 @@ function sizePieces(pieces: Piece[], opts: ChunkingOptions): Piece[] {
  * the combined size would exceed `maxChars`. Prevents the emission of
  * dozens of 30-char "fragments" when a section has many short paragraphs.
  */
-function mergeSmall(pieces: Piece[], opts: ChunkingOptions): Piece[] {
+function mergeSmall(pieces: Piece[], opts: ChunkingOptions, source: string): Piece[] {
   if (pieces.length < 2) return pieces
   const out: Piece[] = []
   for (const p of pieces) {
@@ -550,9 +555,9 @@ function mergeSmall(pieces: Piece[], opts: ChunkingOptions): Piece[] {
     if (
       last &&
       last.text.length < opts.minChars &&
-      last.text.length + p.text.length <= opts.maxChars
+      p.offset + p.text.length - last.offset <= opts.maxChars
     ) {
-      out[out.length - 1] = { text: last.text + p.text, offset: last.offset }
+      out[out.length - 1] = { text: source.slice(last.offset, p.offset + p.text.length), offset: last.offset }
     } else {
       out.push(p)
     }
@@ -568,7 +573,7 @@ function mergeSmall(pieces: Piece[], opts: ChunkingOptions): Piece[] {
  * time. We compute the overlap from the PREVIOUS chunk's final chars,
  * snapped to a word/sentence boundary where possible for readability.
  */
-function applyOverlap(pieces: Piece[], opts: ChunkingOptions): Piece[] {
+function applyOverlap(pieces: Piece[], opts: ChunkingOptions, source: string): Piece[] {
   if (opts.overlapChars <= 0 || pieces.length < 2) return pieces
   const out: Piece[] = [pieces[0]]
   for (let i = 1; i < pieces.length; i++) {
@@ -579,7 +584,8 @@ function applyOverlap(pieces: Piece[], opts: ChunkingOptions): Piece[] {
     // start a chunk mid-word. Search for the first separator AFTER we've
     // trimmed enough chars.
     const snapped = snapOverlapHead(tailSrc)
-    out.push({ text: snapped + curr.text, offset: curr.offset - snapped.length })
+    const offset = prev.offset + prev.text.length - snapped.length
+    out.push({ text: source.slice(offset, curr.offset + curr.text.length), offset })
   }
   return out
 }

@@ -6,7 +6,7 @@ import type {
   SearXngCategory,
   SerpApiEngine,
 } from "@/stores/wiki-store"
-import { hasConfiguredAnyTxt, normalizeAnyTxtConfig } from "@/lib/anytxt-search"
+import { normalizeAnyTxtConfig } from "@/lib/anytxt-search"
 
 export interface WebSearchResult {
   title: string
@@ -88,7 +88,6 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
       searXngCategories: config.searXngCategories ?? providerConfigs.searxng?.searXngCategories ?? ["general"],
       ollamaUrl: providerConfigs.ollama?.ollamaUrl ?? "https://ollama.com",
       providerConfigs,
-      deepResearchSource: config.deepResearchSource ?? "web",
       anyTxt: normalizeAnyTxtConfig(config.anyTxt),
     }
   }
@@ -102,7 +101,6 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
     searXngCategories: activeOverride?.searXngCategories ?? config.searXngCategories ?? ["general"],
     ollamaUrl: resolvedOllamaUrl,
     providerConfigs,
-    deepResearchSource: config.deepResearchSource ?? "web",
     anyTxt: normalizeAnyTxtConfig(config.anyTxt),
   }
 }
@@ -114,17 +112,6 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "ollama") return Boolean(resolved.apiKey?.trim())
   if (resolved.provider === "firecrawl") return true
   return Boolean(resolved.apiKey?.trim())
-}
-
-export function hasConfiguredDeepResearchSources(config: SearchApiConfig): boolean {
-  const resolved = resolveSearchConfig(config)
-  const source = resolved.deepResearchSource ?? "web"
-  const webConfigured = hasConfiguredSearchProvider(resolved)
-  const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
-
-  if (source === "web") return webConfigured
-  if (source === "anytxt") return anyTxtConfigured
-  return webConfigured || anyTxtConfigured
 }
 
 export async function webSearch(

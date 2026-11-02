@@ -345,7 +345,7 @@ describe("review-store resolveItem / dismissItem / clearResolved", () => {
     expect(useReviewStore.getState().items[0]).toMatchObject({ id, resolved: true, dismissed: true })
   })
 
-  it("clearResolved keeps only unresolved items", () => {
+  it("清理隐藏已处理历史，同时保留人工状态以防复活", () => {
     useReviewStore.getState().addItems([
       makeInput({ title: "A" }),
       makeInput({ title: "B" }),
@@ -355,9 +355,10 @@ describe("review-store resolveItem / dismissItem / clearResolved", () => {
     useReviewStore.getState().resolveItem(items[0].id, "user-resolved")
     useReviewStore.getState().resolveItem(items[2].id, "user-resolved")
     useReviewStore.getState().clearResolved()
-    const remaining = useReviewStore.getState().items
+    const remaining = useReviewStore.getState().items.filter((item) => !item.hidden)
     expect(remaining).toHaveLength(1)
     expect(remaining[0].title).toBe("B")
+    expect(useReviewStore.getState().items.filter((item) => item.hidden)).toHaveLength(2)
   })
 
   it("清理已解决保留忽略记录，同时允许不同问题进入待处理", () => {
@@ -370,7 +371,7 @@ describe("review-store resolveItem / dismissItem / clearResolved", () => {
     useReviewStore.getState().resolveItem(reviewed.id, "已审阅")
     useReviewStore.getState().clearResolved()
     useReviewStore.getState().addItem(makeInput({ title: "新增问题" }))
-    expect(useReviewStore.getState().items).toHaveLength(2)
+    expect(useReviewStore.getState().items.filter((item) => !item.hidden)).toHaveLength(2)
     expect(useReviewStore.getState().items.find((item) => item.id === ignored.id)?.dismissed).toBe(true)
     expect(useReviewStore.getState().items.filter((item) => !item.resolved).map((item) => item.title)).toEqual(["新增问题"])
   })

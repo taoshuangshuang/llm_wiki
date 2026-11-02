@@ -1,5 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
-import { queueResearch, queueResearchBatch } from "@/lib/deep-research"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   CheckCircle2,
   MessageSquare,
@@ -14,33 +13,37 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
-import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { createPagesFromReview } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
-import { useAppDialog } from "@/stores/app-dialog-store"
-import { useResearchStore } from "@/stores/research-store"
-import { reviewResearchQueries, reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
 import { openReviewConversation } from "@/lib/review-chat"
 import { useChatStore } from "@/stores/chat-store"
-import { useReviewChatStore } from "@/stores/review-chat-store"
 import { FileApprovalPanel } from "@/components/review/file-approval-panel"
 import { reviewTypeConfig } from "@/components/review/review-type-config"
+import { isLegacyMergeNotice, isPageTargetFailure, pageTargetFailureNote } from "@/lib/merge-review"
+import { retryIngestReview } from "@/lib/ingest-review-queue"
+import { needsReviewAttention, reviewImportance } from "@/lib/review-priority"
 
 export function ReviewView() {
   const { t } = useTranslation()
-  const appDialog = useAppDialog()
   const items = useReviewStore((s) => s.items)
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
   const clearResolved = useReviewStore((s) => s.clearResolved)
   const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
+  const runFilter = useWikiStore((s) => s.reviewRunFilter)
+  const importance = useWikiStore((s) => s.reviewImportanceFilter)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
   const [workingReviewIds, setWorkingReviewIds] = useState<Set<string>>(() => new Set())
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
-  const researchTasks = useResearchStore((s) => s.tasks)
+  const [queuedReviewIds, setQueuedReviewIds] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    useWikiStore.setState({ reviewImportanceFilter: "important" })
+    setSelectedReviewIds(new Set())
+  }, [project?.id, runFilter])
+  useEffect(() => { setSelectedReviewIds(new Set()) }, [importance])
 
   const setReviewWorking = useCallback((id: string, working: boolean) => {
     setWorkingReviewIds((current) => {
@@ -82,31 +85,19 @@ export function ReviewView() {
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
     const item = items.find((i) => i.id === id)
-    // Deep Research — must be checked FIRST before any fuzzy matching
-    if (action === "__deep_research__" && project) {
-      const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredDeepResearchSources(searchConfig)) {
-        await appDialog.alert({ message: t("research.notConfigured") })
-        return
-      }
-      if (item) {
-        useReviewChatStore.getState().setActiveTab("research")
-        const llmConfig = useWikiStore.getState().llmConfig
-        // Use pre-generated search queries if available, otherwise fall back to title
-        const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(
-          pp,
-          topic,
-          llmConfig,
-          searchConfig,
-          reviewResearchQueries(item, topic),
-          id,
-        )
-      } else {
-        resolveItem(id, action)
-      }
+    if (action === "__recheck_merge__" && project && item?.runIds?.length) {
+      setReviewWorking(id, true)
+      setReviewError(id, null)
+      try {
+        for (const runId of item.runIds) await retryIngestReview(pp, runId, item.affectedPages)
+        setQueuedReviewIds((current) => new Set([...current, id]))
+      } catch (error) { setReviewError(id, error) }
+      finally { setReviewWorking(id, false) }
       return
     }
+    if (item?.schemaVersion === 2 && action === "acknowledge") { resolveItem(id, "已审阅"); return }
+    // 历史事项仍可能携带研究动作；审阅页不再执行这些操作。
+    if (action === "__deep_research__" || actionLooksLikeResearch(action)) return
 
     if (action.startsWith("save:") && project) {
       // Decode and save the content to wiki
@@ -178,38 +169,12 @@ export function ReviewView() {
       } finally {
         setReviewWorking(id, false)
       }
-    } else if (actionLooksLikeResearch(action) && project) {
-      // Actions with "research" trigger deep research, not just page creation
-      const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredDeepResearchSources(searchConfig)) {
-        // No research source — fall through to create a page instead
-        if (item) {
-          handleResolve(id, "__create_page__:" + action)
-        }
-        return
-      }
-      if (item) {
-        const llmConfig = useWikiStore.getState().llmConfig
-        const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
-        useReviewChatStore.getState().setActiveTab("research")
-        queueResearch(
-          pp,
-          topic,
-          llmConfig,
-          searchConfig,
-          reviewResearchQueries({ ...item, searchQueries: undefined }, topic),
-          id,
-        )
-      } else {
-        resolveItem(id, action)
-      }
     } else if (
       (action.startsWith("__create_page__:") || actionLooksLikeCreate(action))
       && project
     ) {
       // Create a wiki page from the review item's content. Accepts both
-      // the `__create_page__:` sentinel (forced via the "no search API"
-      // fallback branch above) and actions that heuristically look like
+      // the `__create_page__:` sentinel (kept for historical saved actions) and actions that heuristically look like
       // a create instruction.
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
@@ -242,13 +207,17 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [appDialog, project, items, resolveItem, setReviewError, setReviewWorking, t])
+  }, [project, items, resolveItem, setReviewError, setReviewWorking])
 
   // 未处理的冲突、结构规范和内容遗漏置顶，同一优先级保留原有顺序。
-  const pending = items
-    .filter((i) => !i.resolved)
-    .sort((a, b) => Number(reviewTypeConfig[b.type].pinned === true) - Number(reviewTypeConfig[a.type].pinned === true))
-  const resolved = items.filter((i) => i.resolved && !i.dismissed)
+  const priority: Record<ReviewItem["type"], number> = { merge: 0, contradiction: 1, coverage: 2, structure: 3, "missing-page": 4, duplicate: 5, suggestion: 6, confirm: 7 }
+  const scopedItems = items.filter((item) => !item.hidden && (!runFilter || item.runIds?.includes(runFilter)))
+  const outsideImportantCount = items.filter(needsReviewAttention).length - scopedItems.filter(needsReviewAttention).length
+  const filteredItems = scopedItems.filter((item) => reviewImportance(item) === importance)
+  const pending = filteredItems
+    .filter((item) => !item.resolved && !item.historical)
+    .sort((a, b) => priority[a.type] - priority[b.type])
+  const resolved = filteredItems.filter((item) => (item.resolved || item.historical) && !item.dismissed)
   const selectedPendingIds = useMemo(
     () => pending.map((item) => item.id).filter((id) => selectedReviewIds.has(id)),
     [pending, selectedReviewIds],
@@ -290,42 +259,32 @@ export function ReviewView() {
     setSelectedReviewIds(new Set())
   }, [dismissItem, selectedPendingIds])
 
-  const batchResearchItems = useMemo(
-    () => selectedResearchReviews(items, selectedReviewIds, researchTasks),
-    [items, researchTasks, selectedReviewIds],
-  )
-
-  const handleBatchResearch = useCallback(async () => {
-    if (!project) return
-    const eligibleItems = selectedResearchReviews(
-      items,
-      selectedReviewIds,
-      useResearchStore.getState().tasks,
-    )
-    if (eligibleItems.length === 0) return
-    const state = useWikiStore.getState()
-    if (!hasConfiguredDeepResearchSources(state.searchApiConfig)) {
-      await appDialog.alert({ message: t("research.notConfigured") })
-      return
-    }
-    useReviewChatStore.getState().setActiveTab("research")
-    queueResearchBatch(
-      normalizePath(project.path),
-      eligibleItems.map((item) => ({
-        topic: reviewResearchTopic(item),
-        searchQueries: reviewResearchQueries(item),
-        sourceReviewId: item.id,
-      })),
-      state.llmConfig,
-      state.searchApiConfig,
-    )
-    const queuedIds = new Set(eligibleItems.map((item) => item.id))
-    setSelectedReviewIds((current) => new Set([...current].filter((id) => !queuedIds.has(id))))
-  }, [appDialog, items, project, selectedReviewIds, t])
-
   return (
     <div className="flex h-full flex-col">
+      {runFilter && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-3 text-xs">
+          <div>
+            <p className="font-medium">当前仅显示这次导入的审阅事项</p>
+            {outsideImportantCount > 0 && <p className="mt-1 text-muted-foreground">
+              侧栏角标统计整个项目，其他导入还有 {outsideImportantCount} 项重要待审事项。
+            </p>}
+          </div>
+          <Button size="sm" variant="outline" onClick={() => useWikiStore.setState({ reviewRunFilter: null, reviewImportanceFilter: "important" })}>
+            显示全部重要事项
+          </Button>
+        </div>
+      )}
       <FileApprovalPanel />
+      <div className="flex gap-2 border-b px-4 py-2" role="group" aria-label={t("review.importance", "审阅重要程度")}>
+        {(["important", "optional"] as const).map((value) => (
+          <Button key={value} size="sm" variant={importance === value ? "default" : "outline"}
+            aria-pressed={importance === value}
+            onClick={() => useWikiStore.setState({ reviewImportanceFilter: value })}>
+            {t(`review.${value}`, value === "important" ? "重要" : "非重要")}
+            <span className="ml-1">{scopedItems.filter((item) => reviewImportance(item) === value && !item.resolved && !item.historical).length}</span>
+          </Button>
+        ))}
+      </div>
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
           {t("review.title")}
@@ -374,15 +333,6 @@ export function ReviewView() {
             variant="outline"
             size="sm"
             className="h-7 text-xs"
-            disabled={batchResearchItems.length === 0}
-            onClick={handleBatchResearch}
-          >
-            {t("review.researchSelected", { count: batchResearchItems.length })}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
             disabled={selectedPendingIds.length === 0}
             onClick={handleBatchResolve}
           >
@@ -404,7 +354,7 @@ export function ReviewView() {
         {pending.length === 0 && resolved.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
-            <p>{t("review.allClear")}</p>
+            <p>{t("review.categoryClear", "本分类暂无待审阅事项")}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
@@ -418,6 +368,7 @@ export function ReviewView() {
                 onSelectedChange={setReviewSelected}
                 working={workingReviewIds.has(item.id)}
                 error={reviewErrors[item.id]}
+                recheckQueued={queuedReviewIds.has(item.id)}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -435,6 +386,7 @@ export function ReviewView() {
                 onSelectedChange={setReviewSelected}
                 working={workingReviewIds.has(item.id)}
                 error={reviewErrors[item.id]}
+                recheckQueued={queuedReviewIds.has(item.id)}
               />
             ))}
           </div>
@@ -452,6 +404,7 @@ function ReviewCard({
   onSelectedChange,
   working,
   error,
+  recheckQueued,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
@@ -460,27 +413,16 @@ function ReviewCard({
   onSelectedChange: (id: string, selected: boolean) => void
   working: boolean
   error?: string
+  recheckQueued: boolean
 }) {
   const { t } = useTranslation()
   const config = reviewTypeConfig[item.type]
+  const legacyMerge = isLegacyMergeNotice(item)
+  const targetFailure = item.type === "merge" && isPageTargetFailure(item.description)
+  const missingTargetDetails = targetFailure ? pageTargetFailureNote(item.description) : undefined
   const project = useWikiStore((state) => state.project)
   const hasConversation = useChatStore((state) => state.conversations.some((conversation) => conversation.reviewContext?.id === item.id))
   const Icon = config.icon
-  const researchTask = useResearchStore((state) => {
-    const matching = state.tasks.filter((task) => task.sourceReviewId === item.id)
-    return matching.find((task) => (
-      task.status === "queued" ||
-      task.status === "searching" ||
-      task.status === "synthesizing" ||
-      task.status === "saving"
-    )) ?? matching[matching.length - 1]
-  })
-  const researchRunning = researchTask !== undefined && (
-    researchTask.status === "queued" ||
-    researchTask.status === "searching" ||
-    researchTask.status === "synthesizing" ||
-    researchTask.status === "saving"
-  )
   const conversationButton = (
     <Button
       variant="outline"
@@ -511,11 +453,11 @@ function ReviewCard({
               aria-label={t("review.selectItem", { title: item.title })}
             />
           )}
-          <span className={`inline-flex shrink-0 items-center gap-1 rounded border bg-muted/30 px-1.5 py-0.5 text-[11px] ${config.color}`}>
+          <span className={`inline-flex shrink-0 items-center gap-1 rounded border bg-muted/30 px-1.5 py-0.5 text-[11px] ${legacyMerge ? "text-muted-foreground" : config.color}`}>
             <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-            {t(`review.types.${item.type}`)}
+            {legacyMerge ? "合并记录待核查" : t(`review.types.${item.type}`)}{item.subtype && `：${item.subtype}`}{item.historical && " · 历史证据"}
           </span>
-          <span className="font-medium">{item.title}</span>
+          <span className="font-medium">{legacyMerge ? item.title.replace(/^合并问题：/, "合并记录：") : item.title}</span>
         </div>
         <button
           onClick={() => onDismiss(item.id)}
@@ -525,8 +467,16 @@ function ReviewCard({
         </button>
       </div>
 
-      <p className="mb-3 whitespace-pre-wrap text-xs text-muted-foreground">{item.description}</p>
+      <p className="mb-3 whitespace-pre-wrap text-xs text-muted-foreground">{legacyMerge ? "旧合并仅返回正文，未记录具体歧义。这条兼容提示不能证明存在内容冲突；需重新读取相关页面和来源核查。" : item.description}</p>
 
+      {missingTargetDetails && <p className="mb-3 whitespace-pre-wrap text-xs text-muted-foreground">原因记录不完整：{missingTargetDetails} 下方页面快照可供重新核查，不能补回当时未保存的判断。</p>}
+      {item.outcome && <p className="mb-2 text-xs">处理结果：{item.outcome}</p>}
+      {item.repair && <p className={`mb-2 text-xs ${item.repair.status === "resolved" ? "text-emerald-600" : "text-amber-600"}`}>
+        自动处理记录：{item.repair.reason}
+      </p>}
+      {!legacyMerge && item.risk && <p className="mb-2 text-xs text-amber-600">风险：{targetFailure ? "自动合并未执行，是否适合合并仍待核实；尚未证实存在内容冲突。" : item.risk}</p>}
+      {legacyMerge && <p className="mb-2 text-xs text-muted-foreground">{item.evidence?.length ? "下方为已保存的页面快照，不代表已定位到歧义原文。" : "未保存该页面的合并前后证据，不能还原当时的合并判断。"}</p>}
+      {item.evidence?.length ? <details className="mb-3 rounded border p-2 text-xs"><summary className="cursor-pointer">查看证据（{item.evidence.length}）</summary>{item.evidence.map((evidence, index) => <div key={index} className="mt-2"><p className="break-all text-muted-foreground">{evidence.path}:{evidence.startLine}-{evidence.endLine} · {evidence.snapshot?.side ?? "消费正文"} · {evidence.revision}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap">{evidence.text}</pre></div>)}</details> : null}
       {item.affectedPages && item.affectedPages.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
           {t("review.affectedPages")}: {item.affectedPages.join(", ")}
@@ -540,31 +490,19 @@ function ReviewCard({
               {t("review.actionFailed", { error })}
             </div>
           )}
-          {researchRunning && (
-            <div className="text-xs text-muted-foreground">
-              {t(`research.status.${researchTask.status}`)}
-            </div>
-          )}
           <div className="flex flex-wrap gap-1.5">
           {conversationButton}
-          {(item.type === "suggestion" || item.type === "missing-page") && (
-            <Button
-              variant="default"
-              size="sm"
-              className="h-7 text-xs gap-1"
-              disabled={researchRunning || working}
-              onClick={() => onResolve(item.id, "__deep_research__")}
-            >
-              🔍 {t("research.title")}
-            </Button>
-          )}
-          {item.options.map((opt) => (
+          {legacyMerge && item.runIds?.length ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!project || working} onClick={() => onResolve(item.id, "__recheck_merge__")}>
+            重新核查
+          </Button> : null}
+          {recheckQueued && <span className="self-center text-xs text-muted-foreground">已加入核查队列，可在导入过程查看进度。</span>}
+          {item.options.filter((opt) => opt.kind !== "research" && !actionLooksLikeResearch(opt.action)).map((opt) => (
             <Button
               key={opt.action}
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              disabled={researchRunning || working}
+              disabled={working}
               onClick={() => onResolve(item.id, opt.action)}
             >
               {opt.label}
@@ -588,7 +526,7 @@ function ReviewCard({
 /** Detect if an action implies deep research (web search + LLM synthesis) */
 function actionLooksLikeResearch(action: string): boolean {
   // Skip internal action identifiers
-  if (action.startsWith("__")) return false
+  if (action.startsWith("__")) return action.toLowerCase().includes("research")
   const lower = action.toLowerCase()
   return (
     lower.includes("research") ||

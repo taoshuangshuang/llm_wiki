@@ -4,11 +4,23 @@ import { normalizeReviewTitle } from "@/lib/review-utils"
 export interface ReviewOption {
   label: string
   action: string // identifier for the action
+  kind?: "inspect" | "chat" | "acknowledge" | "dismiss" | "create-page" | "research"
+}
+
+/** 行号和正文对应 revision 指定的固定版本；旧页正文从运行快照读取。 */
+export interface ReviewEvidence {
+  path: string
+  revision: string
+  text: string
+  startLine: number
+  endLine: number
+  snapshot?: { runId: string; side: "before" | "after" | "source" }
+    | { runId: string; side: "candidate"; eventId: string }
 }
 
 export interface ReviewItem {
   id: string
-  type: "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion" | "structure" | "coverage"
+  type: "merge" | "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion" | "structure" | "coverage"
   title: string
   description: string
   sourcePath?: string
@@ -20,6 +32,20 @@ export interface ReviewItem {
   dismissed?: boolean
   resolvedAction?: string
   createdAt: number
+  schemaVersion?: 2
+  logicalId?: string
+  evidenceVersion?: string
+  subtype?: string
+  runIds?: string[]
+  evidence?: ReviewEvidence[]
+  outcome?: string
+  risk?: string
+  historical?: boolean
+  hidden?: boolean
+  resolvedEvidenceVersion?: string
+  legacyIds?: string[]
+  resolutionUpdatedAt?: number
+  repair?: { status: "resolved" | "unresolved"; reason: string }
 }
 
 interface ReviewState {
@@ -48,7 +74,8 @@ interface ReviewState {
  * `normalizeReviewTitle` across LLM regenerations, the same ceiling the
  * previous dedup already accepted.
  */
-export function reviewIdFor(item: Pick<ReviewItem, "type" | "title">): string {
+export function reviewIdFor(item: Pick<ReviewItem, "type" | "title"> & Partial<Pick<ReviewItem, "schemaVersion" | "logicalId" | "evidenceVersion">>): string {
+  if (item.schemaVersion === 2 && item.logicalId && item.evidenceVersion) return `review-v2-${item.logicalId}-${item.evidenceVersion}`
   const key = `${item.type}::${normalizeReviewTitle(item.title)}`
   // FNV-1a (32-bit) — small, deterministic, dependency-free.
   let h = 0x811c9dc5
@@ -79,16 +106,21 @@ function mergeOptions(a: ReviewOption[], b: ReviewOption[]): ReviewOption[] {
  * fields, keep the earliest createdAt, prefer a non-empty description.
  */
 function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
-  const resolved = a.resolved || b.resolved
-  const resolvedAction = resolved ? a.resolvedAction ?? b.resolvedAction : undefined
+  const latest = (b.resolutionUpdatedAt ?? 0) > (a.resolutionUpdatedAt ?? 0) ? b : a
+  const resolved = (a.resolutionUpdatedAt || b.resolutionUpdatedAt) ? latest.resolved : a.resolved || b.resolved
+  const resolvedAction = resolved ? latest.resolvedAction ?? a.resolvedAction ?? b.resolvedAction : undefined
   return {
-    ...a, // a.id is kept; both share it by construction
+    ...a, ...b, // Both share the same evidence identity; retain the newest evidence metadata.
     resolved,
     resolvedAction,
-    ...((a.dismissed || b.dismissed) ? { dismissed: true } : {}),
-    description: a.description || b.description,
-    sourcePath: a.sourcePath ?? b.sourcePath,
+    resolutionUpdatedAt: latest.resolutionUpdatedAt,
+    hidden: latest.hidden ?? a.hidden ?? b.hidden,
+    dismissed: resolved && ((a.resolutionUpdatedAt || b.resolutionUpdatedAt) ? latest.dismissed : a.dismissed || b.dismissed) || undefined,
+    description: b.description || a.description,
+    sourcePath: b.sourcePath ?? a.sourcePath,
     affectedPages: unionField(a.affectedPages, b.affectedPages),
+    runIds: unionField(a.runIds, b.runIds),
+    legacyIds: unionField(a.legacyIds, b.legacyIds),
     searchQueries: unionField(a.searchQueries, b.searchQueries),
     options: mergeOptions(a.options, b.options),
     createdAt: Math.min(a.createdAt, b.createdAt),
@@ -98,7 +130,8 @@ function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
 export function normalizeReviewItems(items: ReviewItem[]): ReviewItem[] {
   const byId = new Map<string, ReviewItem>()
   for (const raw of items) {
-    const remapped: ReviewItem = { ...raw, id: reviewIdFor(raw) }
+    const id = reviewIdFor(raw)
+    const remapped: ReviewItem = { ...raw, id, ...(raw.id !== id ? { legacyIds: unionField(raw.legacyIds, [raw.id]) } : {}) }
     const existing = byId.get(remapped.id)
     byId.set(remapped.id, existing ? mergeReviewItems(existing, remapped) : remapped)
   }
@@ -146,6 +179,12 @@ export const useReviewStore = create<ReviewState>((set) => ({
             sourcePath: incoming.sourcePath ?? old.sourcePath,
             affectedPages: unionField(old.affectedPages, incoming.affectedPages),
             searchQueries: unionField(old.searchQueries, incoming.searchQueries),
+            runIds: unionField(old.runIds, incoming.runIds),
+            evidence: incoming.evidence ?? old.evidence,
+            outcome: incoming.outcome ?? old.outcome,
+            risk: incoming.risk ?? old.risk,
+            historical: incoming.historical ?? old.historical,
+            repair: incoming.repair ?? old.repair,
           }
         } else {
           result.push({ ...incoming, id, resolved: false, createdAt: Date.now() })
@@ -169,19 +208,20 @@ export const useReviewStore = create<ReviewState>((set) => ({
   resolveItem: (id, action) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === id ? { ...item, resolved: true, resolvedAction: action } : item
+        item.id === id ? { ...item, resolved: true, resolvedAction: action, resolvedEvidenceVersion: item.evidenceVersion, resolutionUpdatedAt: Date.now() } : item
       ),
     })),
 
   dismissItem: (id) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === id ? { ...item, resolved: true, dismissed: true, resolvedAction: "dismiss" } : item
+        item.id === id ? { ...item, resolved: true, dismissed: true, resolvedAction: "dismiss", resolvedEvidenceVersion: item.evidenceVersion, resolutionUpdatedAt: Date.now() } : item
       ),
     })),
 
   clearResolved: () =>
     set((state) => ({
-      items: state.items.filter((item) => !item.resolved || item.dismissed),
+      // 增量持久化保留人工状态，清理仅隐藏历史，避免重新打开项目后复活。
+      items: state.items.map((item) => item.resolved && !item.dismissed || item.historical ? { ...item, hidden: true, resolutionUpdatedAt: Date.now() } : item),
     })),
 }))

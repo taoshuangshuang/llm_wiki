@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label"
 import {
   useWikiStore,
   type AnyTxtConfig,
-  type DeepResearchSource,
   type SearchApiConfig,
   type SearchProvider,
   type SearchProviderOverride,
@@ -31,7 +30,7 @@ const SEARCH_PROVIDERS = [
   {
     id: "tavily",
     label: "Tavily",
-    hint: "General web search for Deep Research",
+    hint: "General web search",
     keyPlaceholder: "Enter your Tavily API key (tavily.com)",
     configKind: "key",
   },
@@ -146,10 +145,6 @@ export function WebSearchSection() {
     }
   }
 
-  function updateDeepResearchSource(deepResearchSource: DeepResearchSource) {
-    persist(resolveSearchConfig({ ...resolvedConfig, deepResearchSource })).catch(() => {})
-  }
-
   function updateAnyTxt(patch: AnyTxtConfig) {
     const next = resolveSearchConfig({
       ...resolvedConfig,
@@ -170,35 +165,6 @@ export function WebSearchSection() {
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.webSearch.description")}
         </p>
-      </div>
-
-      <div className="space-y-2 rounded-lg border p-3">
-        <div>
-          <Label>{t("settings.sections.webSearch.deepResearchSources")}</Label>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings.sections.webSearch.deepResearchSourcesHint")}
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {([
-            ["web", t("settings.sections.webSearch.sourceWeb")],
-            ["anytxt", t("settings.sections.webSearch.sourceAnyTxt")],
-            ["both", t("settings.sections.webSearch.sourceBoth")],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => updateDeepResearchSource(value)}
-              className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                (resolvedConfig.deepResearchSource ?? "web") === value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border hover:bg-accent"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="space-y-3 rounded-lg border p-3">

@@ -117,7 +117,7 @@ export function MultimodalSection({ draft, setDraft }: Props) {
               <div className="text-xs text-muted-foreground">
                 {t(
                   "settings.sections.multimodal.useMainHint",
-                  "Reuse the model picked under Settings → LLM provider. Only enable this if that model accepts image input — text-only models will return a 400.",
+                  "Reuse the model picked under Knowledge workflow → Common settings → Models. Only enable this if that model accepts image input — text-only models will return a 400.",
                 )}
               </div>
             </div>

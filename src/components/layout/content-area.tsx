@@ -1,12 +1,14 @@
+import { ImportProcessView } from "@/components/sources/import-process-view"
 import { useEffect, useState } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { ChatPanel } from "@/components/chat/chat-panel"
+import { WorkflowSettingsView } from "@/components/settings/workflow/workflow-settings-view"
 import { SettingsView } from "@/components/settings/settings-view"
 import { SkillsSection } from "@/components/settings/sections/skills-section"
 import { SourcesView } from "@/components/sources/sources-view"
 import { ReviewView } from "@/components/review/review-view"
 import { LintView } from "@/components/lint/lint-view"
-import { SearchView } from "@/components/search/search-view"
+import { KnowledgeWorkspace } from "./knowledge-workspace"
 import { GraphView } from "@/components/graph/graph-view"
 import { PreviewPanel } from "./preview-panel"
 
@@ -58,19 +60,22 @@ function ActiveContent({
     case "chat":
       return null
     case "wiki":
-      return <PreviewPanel />
+    case "search":
+      return <KnowledgeWorkspace />
+    case "workflow":
+      return <WorkflowSettingsView />
     case "settings":
       return <SettingsView />
     case "skills":
       return <SkillsView />
     case "sources":
       return null
+    case "imports":
+      return <ImportProcessView />
     case "review":
       return <ReviewView />
     case "lint":
       return <LintView />
-    case "search":
-      return <SearchView />
     case "graph":
       return <GraphView />
     default:

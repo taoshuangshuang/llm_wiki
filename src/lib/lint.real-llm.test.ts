@@ -13,6 +13,9 @@ import { realFs, createTempProject } from "@/test-helpers/fs-temp"
 
 vi.mock("@/commands/fs", () => realFs)
 
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (command: string) => command === "retrieval_config" ? { effective: { title: true, keyword: true, vector: false, indexPage: true, graph: false } } : undefined) }))
+vi.mock("./evidence-retrieval", () => ({ retrieveEvidence: vi.fn(async () => ({ status: "completed", evidence: [], relations: [], targetResults: [], execution: { configVersion: "test", queries: [], channelStates: [], warnings: [], budgetReached: [], elapsedMs: 0, usage: { candidates: 0, queries: 0, contextChars: 0, readChars: 0 } } })) }))
+
 import { runSemanticLint } from "./lint"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useActivityStore } from "@/stores/activity-store"

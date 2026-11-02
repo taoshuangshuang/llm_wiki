@@ -1,4 +1,4 @@
-import { writeFile, readFile, createDirectory, listDirectory } from "@/commands/fs"
+import { writeFile, readFile, createDirectory, listDirectory, mergeReviewItems } from "@/commands/fs"
 import { normalizeReviewItems, reviewIdFor, type ReviewItem } from "@/stores/review-store"
 import { acceptanceFailureReviews } from "@/lib/ingest-acceptance-reviews"
 import type { AcceptanceReport } from "@/lib/ingest-acceptance"
@@ -16,7 +16,7 @@ async function ensureDir(projectPath: string): Promise<void> {
 export async function saveReviewItems(projectPath: string, items: ReviewItem[]): Promise<void> {
   const pp = normalizePath(projectPath)
   await ensureDir(pp)
-  await writeFile(`${pp}/.llm-wiki/review.json`, JSON.stringify(items, null, 2))
+  await mergeReviewItems(pp, items)
 }
 
 export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]> {

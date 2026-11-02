@@ -6,10 +6,15 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { listIngestDocuments, updateIngestDocument } from "./ingest-document"
+import { listIngestRuns, updateIngestRun } from "./ingest-run"
+import { parseFrontmatter } from "./frontmatter"
 import { sourceSummarySlugFromIdentity } from "./source-identity"
 import { migrateSourcePath } from "./source-lifecycle"
 
 vi.mock("@/commands/fs", () => realFs)
+// 本组验证生成和写入协议；统一审阅入口及串行交接由专门场景集成测试覆盖。
+vi.mock("./ingest-review", () => ({ runIngestReview: vi.fn(async (path: string, runId: string) => { await updateIngestRun(path, runId, (run) => { run.reviewRequested = false; run.reviewStatus = "complete" }) }) }))
 // 本组聚焦来源路径与断点恢复；最终验收另有完整输入输出集成测试。
 vi.mock("./ingest-acceptance", () => ({
   runIngestAcceptance: vi.fn(async () => ({ report: { status: "passed", rounds: [] }, reviews: [] })),
@@ -36,6 +41,12 @@ vi.mock("./llm-client", () => ({
     const systemPrompt = String(messages?.[0]?.content ?? "")
     const userPrompt = String(messages?.[1]?.content ?? "")
 
+    if (systemPrompt.startsWith("核对新知识页和候选页")) {
+      const input = JSON.parse(userPrompt)
+      cb.onToken(JSON.stringify({ decisions: input.candidates.map((page: { path: string; content: string }) => ({ path: page.path, verdict: parseFrontmatter(page.content).frontmatter?.title === parseFrontmatter(input.incoming).frontmatter?.title ? "same" : "different" })) }))
+      cb.onDone()
+      return
+    }
     if (systemPrompt.startsWith("You are merging ")) {
       mergeRequestCount++
       if (truncatedMergeResponse) {
@@ -56,9 +67,9 @@ vi.mock("./llm-client", () => ({
         return
       }
       cb.onToken([
-        "---FILE: wiki/sources/config.md---",
+        "---FILE: wiki/concepts/config.md---",
         "---",
-        'type: "source"',
+        'type: "concept"',
         'title: "Source: config.yaml"',
         'sources: ["config.yaml"]',
         "tags: []",
@@ -75,15 +86,15 @@ vi.mock("./llm-client", () => ({
     }
 
     if (systemPrompt.startsWith("You are analyzing a long source document")) {
-      const chunkMatch = userPrompt.match(/Chunk:\s*(\d+)\/(\d+)/)
-      const chunkIndex = chunkMatch?.[1] ?? "0"
+      const chunkInput = JSON.parse(userPrompt)
+      const chunkIndex = String(chunkInput.chunk.index)
       const numericChunkIndex = Number(chunkIndex)
       if (failLongChunksOnce.has(numericChunkIndex)) {
         failLongChunksOnce.delete(numericChunkIndex)
         cb.onError(new Error(`chunk ${chunkIndex} failed once`))
         return
       }
-      const main = userPrompt.split("## MAIN CHUNK TO ANALYZE\n")[1]?.split("Return only the two requested sections.")[0] ?? ""
+      const main = chunkInput.chunk.main
       if (truncateLongChunksOnce.delete(numericChunkIndex) || truncateLongAboveChars > 0 && main.length > truncateLongAboveChars) {
         cb.onToken("INCOMPLETE_CHUNK_ANALYSIS")
         cb.onDone({ finishReason: "length", truncated: true })
@@ -116,10 +127,7 @@ vi.mock("./llm-client", () => ({
       return
     }
 
-    const targetMatch = systemPrompt.match(
-      /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
-    )
-    if (!targetMatch) {
+    if (!systemPrompt.includes("generate wiki files")) {
       cb.onToken("## Analysis\nConfiguration source.")
       if (truncateAnalysisOnce) {
         truncateAnalysisOnce = false
@@ -140,14 +148,15 @@ vi.mock("./llm-client", () => ({
       return
     }
 
-    const marker = sourceMarkers.shift() ?? "unknown project"
-    const targetPath = targetMatch[1]
+    const marker = (sourceMarkers.length > 1 ? sourceMarkers.shift() : sourceMarkers[0]) ?? "unknown project"
     const sourceIdentity =
       systemPrompt.match(/original source file is:\s*\*\*([^*]+)\*\*/i)?.[1] ?? "config.yaml"
+    const targetPath = `wiki/concepts/${sourceSummarySlugFromIdentity(sourceIdentity)}.md`
     cb.onToken([
       `---FILE: ${targetPath}---`,
       "---",
-      `title: "Source: ${sourceIdentity}"`,
+      "type: concept",
+      `title: "Configuration"`,
       `sources: ["${sourceIdentity}"]`,
       "---",
       "",
@@ -173,7 +182,6 @@ vi.mock("./mineru", () => ({
 
 import {
   autoIngest,
-  buildFallbackSourceSummary,
   executeIngestWrites,
   hasMineruImageRefs,
 } from "./ingest"
@@ -183,7 +191,7 @@ import { parseWithMineruResult } from "./mineru"
 const mockStreamChat = vi.mocked(streamChat)
 const mockParseWithMineru = vi.mocked(parseWithMineruResult)
 
-describe("autoIngest source summary paths", () => {
+describe("autoIngest 来源身份、知识页与断点恢复", () => {
   let tmp: { path: string; cleanup: () => Promise<void> } | undefined
 
   beforeEach(async () => {
@@ -209,7 +217,7 @@ describe("autoIngest source summary paths", () => {
     await writeFileRaw(`${tmp.path}/purpose.md`, "# Purpose\n\nTrack project config files.\n")
     await writeFileRaw(
       `${tmp.path}/schema.md`,
-      "# Schema\n\nEach source needs its own source summary page.\n\n## Page Types\n| goal | wiki/goals/ | Outcomes |\n| habit | wiki/habits/ | Behaviours |",
+      "# Schema\n\nKnowledge pages cite original source identities.\n\n## Page Types\n| concept | wiki/concepts/ | Knowledge |\n| goal | wiki/goals/ | Outcomes |\n| habit | wiki/habits/ | Behaviours |",
     )
     await writeFileRaw(`${tmp.path}/wiki/index.md`, "# Index\n")
     await writeFileRaw(`${tmp.path}/wiki/overview.md`, "# Overview\n")
@@ -228,7 +236,6 @@ describe("autoIngest source summary paths", () => {
       streamingContent: "",
     })
     useWikiStore.setState({
-      sourceWatchConfig: { ...useWikiStore.getState().sourceWatchConfig, generateSourceSummary: true },
       project: {
         id: "same-basename-sources",
         name: "same-basename-sources",
@@ -281,14 +288,27 @@ describe("autoIngest source summary paths", () => {
     )).toBe(false)
   })
 
-  it("preserves complete analysis in a fallback source summary", () => {
-    const analysis = `begin-${"x".repeat(5000)}-end`
-    const content = buildFallbackSourceSummary("long.md", analysis, "2026-07-11")
-    expect(content).toContain(analysis)
-    expect(content).toContain("-end")
+  it("忽略模型输出的摘要，保留历史摘要且不补建新摘要", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const legacyPath = `${tmp.path}/wiki/sources/config.md`
+    const legacy = "---\ntype: source\nsources: [project-a/config.yaml]\n---\n# 历史导读\n人工整理内容。"
+    await writeFileRaw(legacyPath, legacy)
+    generationSuffix = [
+      "---FILE: wiki/sources/config.md---\n---\ntype: source\n---\n模型改写旧摘要\n---END FILE---",
+      "---FILE: wiki/concepts/hidden-summary.md---\n---\ntype: source\n---\n换目录的摘要\n---END FILE---",
+      "---FILE: wiki/sources/new-summary.md---\n---\ntype: concept\n---\n换类型的摘要\n---END FILE---",
+      "---FILE: wiki/Sources/config.md---\n---\ntype: concept\n---\n大小写变体摘要\n---END FILE---",
+    ].join("\n")
+    const written = await autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, useWikiStore.getState().llmConfig)
+    expect(await fs.readFile(legacyPath, "utf8")).toBe(legacy)
+    expect(written.some((path) => path.startsWith("wiki/concepts/"))).toBe(true)
+    expect(written.some((path) => path.startsWith("wiki/sources/"))).toBe(false)
+    expect(await fs.readdir(`${tmp.path}/wiki/sources`)).toEqual(["config.md"])
+    expect(written.some((path) => path.toLowerCase().startsWith("wiki/sources/"))).toBe(false)
+    await expect(fs.access(`${tmp.path}/wiki/concepts/hidden-summary.md`)).rejects.toThrow()
   })
 
-  it("keeps distinct source summaries for same-basename files in different source subdirectories", async () => {
+  it("keeps original source references on distinct knowledge pages for same-basename files in different source subdirectories", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config", "project-b config"]
 
@@ -307,18 +327,18 @@ describe("autoIngest source summary paths", () => {
       "project-b",
     )
 
-    const sourcesDir = path.join(tmp.path, "wiki", "sources")
-    const summaryFiles = (await fs.readdir(sourcesDir))
+    const sourcesDir = path.join(tmp.path, "wiki", "concepts")
+    const knowledgeFiles = (await fs.readdir(sourcesDir))
       .filter((name) => name.endsWith(".md"))
       .sort()
-    const summaryContents = await Promise.all(
-      summaryFiles.map((name) => fs.readFile(path.join(sourcesDir, name), "utf8")),
+    const knowledgeContents = await Promise.all(
+      knowledgeFiles.map((name) => fs.readFile(path.join(sourcesDir, name), "utf8")),
     )
-    const allSummaries = summaryContents.join("\n\n--- summary boundary ---\n\n")
+    const allKnowledge = knowledgeContents.join("\n\n--- page boundary ---\n\n")
 
-    expect(summaryFiles).toHaveLength(2)
-    expect(allSummaries).toContain("project-a/config.yaml")
-    expect(allSummaries).toContain("project-b/config.yaml")
+    expect(knowledgeFiles).toHaveLength(2)
+    expect(allKnowledge).toContain("project-a/config.yaml")
+    expect(allKnowledge).toContain("project-b/config.yaml")
   })
 
   it("replaces stale content when a corrected source solely owns the page", async () => {
@@ -331,8 +351,8 @@ describe("autoIngest source summary paths", () => {
     sourceMarkers = ["corrected wording"]
     await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
 
-    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
-    const content = await fs.readFile(summaryPath, "utf8")
+    const pagePath = `${tmp.path}/wiki/concepts/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    const content = await fs.readFile(pagePath, "utf8")
     expect(content).toContain("corrected wording")
     expect(content).not.toContain("obsolete wording")
     expect(mergeRequestCount).toBe(0)
@@ -342,7 +362,8 @@ describe("autoIngest source summary paths", () => {
     if (!tmp) throw new Error("missing temp project")
     const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
     const sharedPath = `${tmp.path}/wiki/concepts/shared.md`
-    await writeFileRaw(sharedPath, '---\ntitle: Shared\ntype: concept\nsources: [other.md]\n---\n# Shared\nOld evidence.')
+    const original = '---\ntitle: Shared\ntype: concept\nsources: [other.md]\n---\n# Shared\nOld evidence.'
+    await writeFileRaw(sharedPath, original)
     generationSuffix = '\n---FILE: wiki/concepts/shared.md---\n---\ntitle: Shared\ntype: concept\nsources: [project-a/config.yaml]\n---\n# Shared\nNew evidence.\n---END FILE---'
     // 半截响应长度充足，不能仅靠正文长度保护识别；必须遵守模型的截断标记。
     truncatedMergeResponse = '---\ntitle: Shared\ntype: concept\n---\n# Shared\nINCOMPLETE_MERGE '.repeat(5)
@@ -353,21 +374,19 @@ describe("autoIngest source summary paths", () => {
     const call = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).startsWith("You are merging "))
     expect(call?.[4]).toMatchObject({ reasoning: { mode: "off" }, max_tokens: 32_768 })
     const saved = await fs.readFile(sharedPath, "utf8")
-    expect(saved).not.toContain("INCOMPLETE_MERGE")
+    // 截断合并稿被拒绝；完整新稿按约定写入，旧证据保存在可靠快照。
     expect(saved).toContain("New evidence.")
-    expect(saved).toContain("other.md")
+    expect(saved).not.toContain("INCOMPLETE_MERGE")
+    expect((await listIngestRuns(tmp.path))[0].pages["wiki/concepts/shared.md"].before).toBe(original)
   })
 
   it("moves the canonical source summary and its source reference", async () => {
     if (!tmp) throw new Error("missing temp project")
-    sourceMarkers = ["movable summary"]
-    const oldSource = `${tmp.path}/raw/sources/project-a/config.yaml`
-    await autoIngest(tmp.path, oldSource, useWikiStore.getState().llmConfig)
-
     const oldIdentity = "project-a/config.yaml"
     const newIdentity = "archive/config.yaml"
     const oldSummary = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity(oldIdentity)}.md`
     const newSummary = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity(newIdentity)}.md`
+    await writeFileRaw(oldSummary, '---\ntype: source\nsources: ["project-a/config.yaml"]\n---\n# Historical summary\nExisting notes.')
     await migrateSourcePath(
       tmp.path,
       "raw/sources/project-a/config.yaml",
@@ -445,7 +464,7 @@ describe("autoIngest source summary paths", () => {
     )
   })
 
-  it("migrates a safe legacy basename source summary to the canonical nested source path", async () => {
+  it("重新入库保留唯一旧摘要，不再迁移到新路径", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
     await fs.rm(path.join(tmp.path, "raw", "sources", "project-b", "config.yaml"))
@@ -475,11 +494,9 @@ describe("autoIngest source summary paths", () => {
 
     const canonicalSummary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
     const canonicalSummaryPath = path.join(tmp.path, canonicalSummary)
-    const content = await fs.readFile(canonicalSummaryPath, "utf8")
-
-    await expect(fs.access(legacySummaryPath)).rejects.toThrow()
-    expect(content).toContain('sources: ["project-a/config.yaml"]')
-    expect(content).toContain("project-a config")
+    await expect(fs.access(canonicalSummaryPath)).rejects.toThrow()
+    expect(await fs.readFile(legacySummaryPath, "utf8")).toContain("Legacy source summary body.")
+    expect(await fs.readFile(legacySummaryPath, "utf8")).toContain('sources: ["config.yaml"]')
   })
 
   it("does not migrate a legacy basename source summary when the basename is ambiguous", async () => {
@@ -511,7 +528,7 @@ describe("autoIngest source summary paths", () => {
     const canonicalSummaryPath = path.join(tmp.path, canonicalSummary)
 
     expect(await fs.readFile(legacySummaryPath, "utf8")).toBe(legacyContent)
-    expect(await fs.readFile(canonicalSummaryPath, "utf8")).toContain("project-a config")
+    await expect(fs.access(canonicalSummaryPath)).rejects.toThrow()
   })
 
   it("analyzes oversized sources in chunks before final wiki generation", async () => {
@@ -551,7 +568,7 @@ describe("autoIngest source summary paths", () => {
     expect(chunkSystemPrompt).toContain("wiki/goals/")
     expect(chunkSystemPrompt).toContain("Schema-Typed Candidates")
     expect(chunkSystemPrompt).toContain("never invent goals")
-    expect(String(chunkCalls[0][1]?.[1]?.content ?? "")).toContain("## MAIN CHUNK TO ANALYZE")
+    expect(JSON.parse(String(chunkCalls[0][1]?.[1]?.content)).chunk.main).not.toBe("")
     expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).toContain(
       "Digest after chunk 1: stable context 1.",
     )
@@ -563,20 +580,15 @@ describe("autoIngest source summary paths", () => {
       String(messages?.[0]?.content ?? "").includes("Based on the analysis provided, generate wiki files"),
     )
     expect(generationCall).toBeTruthy()
-    const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
-    expect(generationPrompt).toContain("Long Source Context")
-    expect(generationPrompt).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    const finalDigestSection = generationPrompt
-      .split("## Source Context")[1]
-      ?.split("## Chunk Analysis Notes")[0] ?? ""
-    expect(finalDigestSection).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    expect(finalDigestSection).not.toContain(
-      `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
-    )
+    const generationCalls = mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    expect(generationCalls).toHaveLength(chunkCalls.length)
+    for (const [index, call] of generationCalls.entries()) {
+      const input = JSON.parse(JSON.parse(String(call[1][1].content)).source)
+      expect(input.chunk_index).toBe(index + 1)
+      expect(input.chunk_total).toBe(chunkCalls.length)
+      expect(input.main).toBe(JSON.parse(String(chunkCalls[index][1][1].content)).chunk.main)
+      if (index > 0) expect(input.auxiliary_context.global_digest).toContain(`Digest after chunk ${index}: stable context ${index}.`)
+    }
   })
 
   it("来源能放入上下文但分析输出截断时，自动分块恢复而不直接终止入库", async () => {
@@ -593,10 +605,11 @@ describe("autoIngest source summary paths", () => {
     )
     expect(chunkCalls.length).toBeGreaterThan(1)
     expect(chunkCalls.map(([, messages]) => String(messages?.[1]?.content)).join("\n")).toContain("TAIL_EVIDENCE")
-    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
-    expect(String(generationCall?.[1]?.[1]?.content)).toContain("丙".repeat(4500))
-    expect(String(generationCall?.[1]?.[1]?.content)).toContain("TAIL_EVIDENCE")
-    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/dense-report.md")}.md`
+    const generationCalls = mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0].content).includes("generate wiki files"))
+    const generatedSubjects = generationCalls.map((call) => JSON.parse(JSON.parse(String(call[1][1].content)).source).main).join("\n")
+    expect(generatedSubjects).toContain("丙".repeat(4500))
+    expect(generatedSubjects).toContain("TAIL_EVIDENCE")
+    const summary = `wiki/concepts/${sourceSummarySlugFromIdentity("project-a/dense-report.md")}.md`
     expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("recovered analysis")
   })
 
@@ -612,7 +625,7 @@ describe("autoIngest source summary paths", () => {
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
     expect(generationCall).toBeTruthy()
     expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("INCOMPLETE_CHUNK_ANALYSIS")
-    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/subdivide-report.md")}.md`
+    const summary = `wiki/concepts/${sourceSummarySlugFromIdentity("project-a/subdivide-report.md")}.md`
     expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("subdivided source")
   })
 
@@ -636,7 +649,7 @@ describe("autoIngest source summary paths", () => {
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
     expect(generationCall).toBeTruthy()
     expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("INCOMPLETE_CHUNK_ANALYSIS")
-    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/directory-report.md")}.md`
+    const summary = `wiki/concepts/${sourceSummarySlugFromIdentity("project-a/directory-report.md")}.md`
     expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("directory recovery")
   })
 
@@ -666,7 +679,7 @@ describe("autoIngest source summary paths", () => {
     for (const call of [mockStreamChat.mock.calls[0], ...chunkCalls]) {
       expect(call[4]?.max_tokens).toBe(expectedMaxTokens)
     }
-    const summary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/output-budget-report.md")}.md`
+    const summary = `wiki/concepts/${sourceSummarySlugFromIdentity("project-a/output-budget-report.md")}.md`
     expect(await fs.readFile(path.join(tmp.path, summary), "utf8")).toContain("expanded analysis budget")
   })
 
@@ -696,32 +709,19 @@ describe("autoIngest source summary paths", () => {
     mockStreamChat.mockClear()
     await autoIngest(tmp.path, sourcePath, config, undefined, "project-a")
     expect(String(mockStreamChat.mock.calls[0]?.[1]?.[0]?.content)).toContain("You are analyzing a long source document")
-    expect(String(mockStreamChat.mock.calls[0]?.[1]?.[1]?.content)).toContain("Chunk: 2/")
-    expect(await fs.readdir(`${tmp.path}/.llm-wiki/ingest-progress`)).toEqual([])
+    expect(JSON.parse(String(mockStreamChat.mock.calls[0]?.[1]?.[1]?.content)).chunk.index).toBe(2)
+    expect((await listIngestDocuments(tmp.path))[0].chunks.every((chunk) => chunk.analysis)).toBe(true)
   })
 
-  it("切分规则升级后丢弃旧版分析断点，重新分析以避免沿用缺失内容", async () => {
+  it("旧整文分析断点不能转换成新子块任务或进入生成上下文", async () => {
     if (!tmp) throw new Error("missing temp project")
-    failLongChunksOnce = new Set([2])
     const sourcePath = `${tmp.path}/raw/sources/project-a/legacy-checkpoint.md`
     await writeFileRaw(sourcePath, `# One\n${"甲".repeat(4500)}\n\n## Two\n${"乙".repeat(4500)}\n\n## Three\n${"丙".repeat(4500)}`)
-    const config = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
-    await expect(autoIngest(tmp.path, sourcePath, config, undefined, "project-a")).rejects.toThrow("Chunk analysis stream failed")
-
-    // 模拟升级前留下的断点：即使原文和块数相同，也不得复用旧切分结果。
-    const progressDir = path.join(tmp.path, ".llm-wiki/ingest-progress")
-    const checkpointPath = path.join(progressDir, (await fs.readdir(progressDir))[0])
-    const checkpoint = JSON.parse(await fs.readFile(checkpointPath, "utf8"))
-    checkpoint.version = 1
-    checkpoint.analyses = ["LEGACY_INCOMPLETE_ANALYSIS"]
-    await fs.writeFile(checkpointPath, JSON.stringify(checkpoint))
-    mockStreamChat.mockClear()
-
-    await autoIngest(tmp.path, sourcePath, config, undefined, "project-a")
-
-    expect(String(mockStreamChat.mock.calls[0]?.[1]?.[1]?.content)).toContain("Chunk: 1/")
-    const generationCall = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).includes("generate wiki files"))
-    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("LEGACY_INCOMPLETE_ANALYSIS")
+    await writeFileRaw(`${tmp.path}/.llm-wiki/ingest-progress/legacy.json`, JSON.stringify({ version: 1, completedThrough: 1, analyses: ["LEGACY_INCOMPLETE_ANALYSIS"] }))
+    await autoIngest(tmp.path, sourcePath, { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }, undefined, "project-a")
+    const first = mockStreamChat.mock.calls.find(([, messages]) => String(messages[0].content).startsWith("You are analyzing a long source document"))!
+    expect(JSON.parse(String(first[1][1].content)).chunk.index).toBe(1)
+    for (const call of mockStreamChat.mock.calls.filter(([, messages]) => String(messages[0].content).includes("generate wiki files"))) expect(String(call[1][1].content)).not.toContain("LEGACY_INCOMPLETE_ANALYSIS")
   })
 
   it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {
@@ -751,8 +751,9 @@ describe("autoIngest source summary paths", () => {
       autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a"),
     ).rejects.toThrow("Chunk analysis stream failed")
 
-    const progressDir = path.join(tmp.path, ".llm-wiki", "ingest-progress")
-    expect((await fs.readdir(progressDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
+    const [beforeResume] = await listIngestDocuments(tmp.path)
+    expect(beforeResume.chunks[0].analysis).toContain("introduced topic 1")
+    expect((await listIngestRuns(tmp.path)).find((run) => run.chunk?.index === 1)?.writeStatus).toBe("complete")
 
     mockStreamChat.mockClear()
     await autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a")
@@ -761,17 +762,18 @@ describe("autoIngest source summary paths", () => {
       String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
     )
     expect(resumedChunkCalls.length).toBeGreaterThan(0)
-    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain("Chunk: 2/3")
+    expect(JSON.parse(String(resumedChunkCalls[0][1]?.[1]?.content)).chunk).toMatchObject({ index: 2, total: 3 })
     expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain(
       "Digest after chunk 1: stable context 1.",
     )
     expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).not.toContain(
       "introduced topic 1",
     )
-    await expect(fs.readdir(progressDir)).resolves.toEqual([])
+    expect((await listIngestDocuments(tmp.path))[0].documentRunId).toBe(beforeResume.documentRunId)
+    expect((await listIngestRuns(tmp.path)).every((run) => run.writeStatus === "complete")).toBe(true)
   })
 
-  it("adds follow-up research reviews from the dedicated review stage", async () => {
+  it("写入阶段只交接后台审阅，不发布合并前建议", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
     generationSuffix = [
@@ -802,20 +804,12 @@ describe("autoIngest source summary paths", () => {
       "project-a",
     )
 
-    const reviews = useReviewStore.getState().items
-    expect(reviews).toHaveLength(1)
-    expect(reviews[0]).toMatchObject({
-      type: "suggestion",
-      title: "Research nitrification inhibition signals",
-    })
-    expect(reviews[0].searchQueries).toEqual([
-      "nitrification inhibition early warning wastewater",
-      "ammonia oxidation inhibition signals",
-      "wastewater nitrification process upset indicators",
-    ])
+    expect(useReviewStore.getState().items).toEqual([])
+    expect((await listIngestRuns(tmp.path))[0].reviewRequested).toBe(false)
+    expect(mockStreamChat.mock.calls.some(([, messages]) => String(messages[0].content).startsWith("You are identifying high-value follow-up research items"))).toBe(false)
   })
 
-  it("parses generation and dedicated review-stage blocks separately", async () => {
+  it("生成稿中的历史 REVIEW 块只作为现场保留", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
     generationSuffix = [
@@ -839,13 +833,10 @@ describe("autoIngest source summary paths", () => {
       "project-a",
     )
 
-    const reviews = useReviewStore.getState().items
-    expect(reviews).toHaveLength(1)
-    expect(reviews[0]).toMatchObject({
-      type: "suggestion",
-      title: "Real Follow-up",
-    })
-    expect(reviews[0].description).not.toContain("Truncated Orphan")
+    expect(useReviewStore.getState().items).toEqual([])
+    const [run] = await listIngestRuns(tmp.path)
+    expect(run.reviewRequested).toBe(false)
+    expect(run.generation?.raw).toContain("Truncated Orphan")
   })
 
   it("retries a truncated FILE block with a targeted generation request", async () => {
@@ -949,11 +940,8 @@ describe("autoIngest source summary paths", () => {
     ].join("\n")
     truncateGenerationOnce = true
 
-    await expect(autoIngest(
-      tmp.path,
-      sourcePath,
-      useWikiStore.getState().llmConfig,
-    )).rejects.toThrow("generation reached its output limit")
+    await expect(autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)).rejects.toThrow("Ingest incomplete")
+    expect((await listIngestRuns(tmp.path))[0].writeStatus).toBe("partial")
     await expect(fs.readFile(`${tmp.path}/wiki/goals/preserved.md`, "utf8"))
       .resolves.toContain("# Preserved")
 
@@ -969,7 +957,7 @@ describe("autoIngest source summary paths", () => {
     const generationCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
       String(messages[0]?.content ?? "").includes("## What to generate"),
     )
-    const resumedPrompt = String(generationCalls[generationCalls.length - 1]?.[1]?.[1]?.content ?? "")
+    const resumedPrompt = String(generationCalls[generationCalls.length - 1]?.[1]?.[0]?.content ?? "")
     expect(resumedPrompt)
       .toContain("## Resume checkpoint")
     expect(resumedPrompt).toContain("wiki/goals/preserved.md")
@@ -981,7 +969,7 @@ describe("autoIngest source summary paths", () => {
     )
     expect(analysisCalls).toHaveLength(1)
     for (const call of generationCalls) {
-      expect(String(call[1][1].content)).toContain("## Analysis\nConfiguration source.")
+      expect(JSON.parse(String(call[1][1].content)).analysis).toContain("## Analysis\nConfiguration source.")
     }
   })
 
@@ -991,7 +979,8 @@ describe("autoIngest source summary paths", () => {
     const config = { ...useWikiStore.getState().llmConfig }
     sourceMarkers = ["before change", "after change"]
     truncateGenerationOnce = true
-    await expect(autoIngest(tmp.path, sourcePath, config)).rejects.toThrow("generation reached its output limit")
+    await expect(autoIngest(tmp.path, sourcePath, config)).rejects.toThrow("Ingest incomplete")
+    expect((await listIngestRuns(tmp.path))[0].writeStatus).toBe("partial")
 
     // 只改变一个输入条件，确认复用严格受来源、项目规则和模型约束。
     if (change === "source") await writeFileRaw(sourcePath, "name: beta\n")
@@ -1002,24 +991,25 @@ describe("autoIngest source summary paths", () => {
     if (change === "model") config.model = "changed-model"
     if (change === "language") useWikiStore.getState().setOutputLanguage("French")
     if (change === "corrupt") {
-      const dir = `${tmp.path}/.llm-wiki/ingest-analysis`
-      await fs.writeFile(path.join(dir, (await fs.readdir(dir))[0]), "broken json")
+      const [document] = await listIngestDocuments(tmp.path)
+      await updateIngestDocument(tmp.path, document.documentRunId, (state) => { state.chunks[0].analysis = "损坏的分析正文" })
     }
     mockStreamChat.mockClear()
     await autoIngest(tmp.path, sourcePath, config)
     const analysisCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
       String(messages[0]?.content ?? "").startsWith("You are an expert research analyst"),
     )
-    expect(analysisCalls).toHaveLength(1)
-    // 分析失效时不能继续跳过旧规则下写入的页面，必须重新生成并重新验收。
+    expect(analysisCalls).toHaveLength(change === "index" ? 0 : 1)
+    // 来源变化新建 run；其他规则变化重新分析，但不默认覆盖已完成工作。
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
       String(messages[0]?.content ?? "").includes("## What to generate"),
     )
-    expect(String(generationCall?.[1]?.[1]?.content)).not.toContain("## Resume checkpoint")
-    expect(await fs.readdir(`${tmp.path}/.llm-wiki/ingest-analysis`)).toHaveLength(0)
+    if (change === "source") expect(String(generationCall?.[1]?.[0]?.content)).not.toContain("## Resume checkpoint")
+    else expect(String(generationCall?.[1]?.[0]?.content)).toContain("## Resume checkpoint")
+    expect((await listIngestDocuments(tmp.path)).every((document) => document.splitVersion === "semantic-v2")).toBe(true)
   })
 
-  it("长文断点的分析策略变化后重新分析，避免沿用旧提示词产生的片段", async () => {
+  it("长文重试只对尚未写入的子块使用新分析策略，保留已完成块", async () => {
     if (!tmp) throw new Error("missing temp project")
     const sourcePath = `${tmp.path}/raw/sources/project-a/changed-policy.md`
     const config = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
@@ -1032,7 +1022,8 @@ describe("autoIngest source summary paths", () => {
     const firstChunkCall = mockStreamChat.mock.calls.find(([, messages]) =>
       String(messages[0].content).startsWith("You are analyzing a long source document"),
     )
-    expect(String(firstChunkCall?.[1]?.[1]?.content)).toContain("Chunk: 1/")
+    expect(String(firstChunkCall?.[1]?.[0]?.content)).toContain("Updated evidence requirements.")
+    expect(JSON.parse(String(firstChunkCall?.[1]?.[1]?.content)).chunk.index).toBe(2)
   })
 
   it("rejects an ingest when a truncated FILE block cannot be repaired", async () => {
@@ -1052,13 +1043,8 @@ describe("autoIngest source summary paths", () => {
     ].join("\n")
     truncatedRepairResponse = ""
 
-    await expect(autoIngest(
-      tmp.path,
-      `${tmp.path}/raw/sources/project-a/config.yaml`,
-      useWikiStore.getState().llmConfig,
-      undefined,
-      "project-a",
-    )).rejects.toThrow("Ingest incomplete")
+    await expect(autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, useWikiStore.getState().llmConfig, undefined, "project-a")).rejects.toThrow("Ingest incomplete")
+    expect((await listIngestRuns(tmp.path))[0].writeStatus).toBe("partial")
 
     const activity = useActivityStore.getState().items[0]
     expect(activity.status).toBe("error")
@@ -1066,22 +1052,16 @@ describe("autoIngest source summary paths", () => {
     expect(activity.detail).toContain("wiki/concepts/incomplete.md")
   })
 
-  it("propagates cancellation that happens during the dedicated review stage", async () => {
+  it("写入不再执行旧同步审阅，审阅取消与导入分离", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
     generationSuffix = `${"\n"}${"X".repeat(10_500)}`
     const controller = new AbortController()
     abortDuringReview = controller
 
-    await expect(
-      autoIngest(
-        tmp.path,
-        `${tmp.path}/raw/sources/project-a/config.yaml`,
-        { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 },
-        controller.signal,
-        "project-a",
-      ),
-    ).rejects.toThrow("Ingest cancelled")
+    await autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 }, controller.signal, "project-a")
+    expect(controller.signal.aborted).toBe(false)
+    expect((await listIngestRuns(tmp.path))[0].reviewRequested).toBe(false)
   })
 
   it("falls back to built-in PDF extraction when MinerU fails for a non-cancelled ingest", async () => {
@@ -1166,7 +1146,7 @@ describe("autoIngest source summary paths", () => {
         controller.signal,
         "project-a",
       ),
-    ).rejects.toThrow("Ingest cancelled")
+    ).rejects.toThrow(/Ingest cancelled|operation was aborted/)
 
     expect(
       useActivityStore.getState().items.some((item) =>
@@ -1175,7 +1155,7 @@ describe("autoIngest source summary paths", () => {
     ).toBe(false)
   })
 
-  it("canonicalizes interactive source summary paths and sources frontmatter", async () => {
+  it("交互写入知识页仍规范化原始来源身份", async () => {
     if (!tmp) throw new Error("missing temp project")
 
     const conversationId = "conv-interactive-source"
@@ -1184,7 +1164,7 @@ describe("autoIngest source summary paths", () => {
       conversations: [
         {
           id: conversationId,
-          title: "Interactive source summary",
+          title: "Interactive knowledge page",
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
@@ -1194,14 +1174,14 @@ describe("autoIngest source summary paths", () => {
         {
           id: "user-1",
           role: "user",
-          content: "Please save the source summary.",
+          content: "Please save the knowledge page.",
           timestamp: Date.now(),
           conversationId,
         },
         {
           id: "assistant-1",
           role: "assistant",
-          content: "Ready to create the source summary.",
+          content: "Ready to create the knowledge page.",
           timestamp: Date.now(),
           conversationId,
         },
@@ -1213,7 +1193,7 @@ describe("autoIngest source summary paths", () => {
       useWikiStore.getState().llmConfig,
     )
 
-    const canonicalSummary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    const canonicalSummary = "wiki/concepts/config.md"
     const canonicalSummaryPath = path.join(tmp.path, canonicalSummary).replace(/\\/g, "/")
     const staleSummaryPath = path.join(tmp.path, "wiki", "sources", "config.md")
     const content = await fs.readFile(canonicalSummaryPath, "utf8")

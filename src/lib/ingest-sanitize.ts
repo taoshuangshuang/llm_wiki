@@ -131,7 +131,7 @@ export function normalizeWikiFileLinks(
 }
 
 /** 仅转换正文普通文本，跳过 frontmatter、代码、数学公式与媒体示例。 */
-function mapWikiBodyText(content: string, transform: (segment: string) => string): string {
+export function mapWikiBodyText(content: string, transform: (segment: string) => string, includeInlineCode = false): string {
   const bom = content.startsWith("\uFEFF") ? "\uFEFF" : ""
   const withoutBom = content.slice(bom.length)
   const frontmatter = withoutBom.match(
@@ -139,7 +139,6 @@ function mapWikiBodyText(content: string, transform: (segment: string) => string
   )
   const prefix = `${bom}${frontmatter?.[0] ?? ""}`
   const body = withoutBom.slice(frontmatter?.[0].length ?? 0)
-  if (!body.includes("[[")) return content
 
   let fence: { marker: "`" | "~"; length: number } | null = null
   let mathFence = false
@@ -173,7 +172,7 @@ function mapWikiBodyText(content: string, transform: (segment: string) => string
     const indented = /^(?: {4}|\t)/.test(lineContent)
     const nestedList = /^(?: {4}|\t)(?:[-+*]|\d+[.)])\s+/.test(lineContent)
     if (indented && !nestedList) return line
-    return mapOutsideInlineCode(line, transform)
+    return includeInlineCode ? transform(line) : mapOutsideInlineCode(line, transform)
   })
   return `${prefix}${normalized}`
 }

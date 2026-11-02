@@ -1,0 +1,43 @@
+{
+  "name": "http-fast",
+  "request": {
+    "message": "imeta 是什么",
+    "mode": "fast",
+    "topK": 5,
+    "includeContent": false,
+    "persistSession": false,
+    "tools": {
+      "wiki": true,
+      "web": false,
+      "anytxt": false
+    }
+  },
+  "seconds": 417.75,
+  "rawBytes": 2489141,
+  "compactBytes": 6356,
+  "usage": {
+    "completionChars": 2118,
+    "promptChars": 108231,
+    "referenceCount": 17,
+    "toolEventCount": 46
+  },
+  "referencePaths": [
+    "wiki/constraints/imeta升级与二开适配限制.md",
+    "wiki/constraints/imeta 查询配置参数与能力边界.md",
+    "wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md",
+    "wiki/cases/升级迁移与安装类支持问题汇总.md",
+    "wiki/interfaces/IMetadataCustomerDocRpcService-自定义档案元数据RPC接口.md",
+    "wiki/cases/202601支持问题工单记录.md",
+    "wiki/constraints/imeta 特征属性处理使用边界约束.md",
+    "wiki/modules/元数据服务（iuap-metadata-base）.md",
+    "wiki/sources/3-元数据--14-11-元数据服务sdk与缓存--1cyes42.md",
+    "wiki/cases/入库审阅特征11-mddypd与标准服务对接特征md原文-9特征扩展实体创建与抽取流程的关键内容未在.md",
+    "wiki/topics/QuerySchema（imeta 查询 API）.md",
+    "wiki/implementations/imeta 多选引用属性条件翻译与中间表查询机制.md",
+    "wiki/constraints/元数据组件建模与配置核心约束.md",
+    "wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md",
+    "wiki/topics/元数据组件（Meta Component）.md",
+    "wiki/faqs/元数据相关问题排查指引.md",
+    "wiki/faqs/元数据组件与领域相关问题排查指引.md"
+  ]
+}

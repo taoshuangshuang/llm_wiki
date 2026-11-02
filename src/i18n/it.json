@@ -26,11 +26,24 @@
     "subtitle": "Costruisci e mantieni la tua knowledge base personale con gli LLM"
   },
   "common": {
-    "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
-    "dismiss": "Nascondi", "loading": "Caricamento...", "optional": "opzionale"
+    "retry": "Riprova",
+    "cancel": "Annulla",
+    "ignore": "Ignora",
+    "close": "Chiudi",
+    "ok": "OK",
+    "confirm": "Conferma",
+    "notice": "Avviso",
+    "dismiss": "Nascondi",
+    "loading": "Caricamento...",
+    "optional": "opzionale"
   },
-  "layout": { "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
-  "errors": { "generic": "Qualcosa è andato storto" },
+  "layout": {
+    "showSidebar": "Mostra la barra laterale",
+    "hideSidebar": "Nascondi la barra laterale"
+  },
+  "errors": {
+    "generic": "Qualcosa è andato storto"
+  },
   "mermaid": {
     "renderFailed": "Impossibile visualizzare il diagramma Mermaid",
     "showDetails": "Mostra i dettagli del parser",
@@ -39,6 +52,7 @@
     "diagram": "Diagramma"
   },
   "nav": {
+    "imports": "Import process",
     "chat": "Chat",
     "wiki": "Wiki",
     "sources": "Fonti",
@@ -51,7 +65,9 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Cambia progetto",
     "updateAvailable": "Aggiornamento disponibile",
-    "updateAvailableSuffix": " · aggiorna"
+    "updateAvailableSuffix": " · aggiorna",
+    "workflow": "Knowledge workflow",
+    "browseSearch": "Sfoglia e cerca"
   },
   "updateBanner": {
     "message": "La versione {{version}} è disponibile",
@@ -66,7 +82,7 @@
   "sidebar": {
     "businessModules": "Business",
     "moduleLoading": "Caricamento dei moduli…",
-    "moduleSetup": "Aggiungi a schema.md una sezione Business Modules con un dizionario JSON dei moduli.",
+    "moduleSetup": "Aggiungi a business-modules.md una sezione Business Modules con un dizionario JSON dei moduli. Sono supportate anche le sezioni precedenti in schema.md.",
     "moduleEmpty": "Nessuna pagina in questo modulo.",
     "moduleUnreadable": "Impossibile leggere {{count}} elementi wiki.",
     "knowledge": "Conoscenza",
@@ -76,10 +92,16 @@
     "allSources": "Tutte le fonti",
     "noWikiPages": "Ancora nessuna pagina wiki. Importa delle fonti per iniziare.",
     "typeLabels": {
-      "overview": "Panoramica", "entity": "Entità", "concept": "Concetti",
-      "source": "Fonti", "synthesis": "Sintesi", "finding": "Risultati",
-      "thesis": "Tesi", "methodology": "Metodologie",
-      "comparison": "Confronti", "query": "Query"
+      "overview": "Panoramica",
+      "entity": "Entità",
+      "concept": "Concetti",
+      "source": "Fonti",
+      "synthesis": "Sintesi",
+      "finding": "Risultati",
+      "thesis": "Tesi",
+      "methodology": "Metodologie",
+      "comparison": "Confronti",
+      "query": "Query"
     }
   },
   "editor": {
@@ -121,34 +143,11 @@
       "createFailed": "Non è stato possibile creare la pagina mancante.",
       "emptyDraftError": "Il modello ha restituito una bozza vuota."
     },
-    "frontmatter": { "origin": "Origine", "more": "Altro" },
+    "frontmatter": {
+      "origin": "Origine",
+      "more": "Altro"
+    },
     "rawMarkdownEditor": "Editor Markdown grezzo"
-  },
-  "research": {
-    "title": "Deep Research",
-    "notConfigured": "Le fonti per la Deep Research non sono configurate. Vai in Impostazioni → Fonti di informazione esterne per configurare la ricerca web o AnyTXT.",
-    "activeBadge": "{{running}} attive{{queued, plural, =0 {} other {, {{queued}} in coda}}}",
-    "inputPlaceholder": "Inserisci un argomento di ricerca...",
-    "emptyTitle": "Ancora nessuna ricerca",
-    "emptyHint": "Inserisci un argomento qui sopra oppure clicca su Deep Research in Revisione",
-    "sourcesCount": "Fonti ({{count}})",
-    "anyTxtSource": "Fonte AnyTXT",
-    "webSource": "Fonte web",
-    "synthesis": "Sintesi",
-    "thinking": "Ragionamento",
-    "open": "Apri",
-    "retry": "Riprova",
-    "rerun": "Esegui di nuovo",
-    "remove": "Rimuovi",
-    "status": {
-      "queued": "In coda",
-      "searching": "Ricerca delle fonti...",
-      "synthesizing": "Sintesi in corso...",
-      "saving": "Salvataggio nel wiki...",
-      "saved": "Salvato",
-      "done": "Completato",
-      "failed": "Non riuscito"
-    }
   },
   "project": {
     "createTitle": "Crea un nuovo progetto wiki",
@@ -419,6 +418,30 @@
     "startSearching": "Scrivi per cercare nelle pagine wiki"
   },
   "lint": {
+    "awaitingIssues": "Check still running. No matching findings received yet.",
+    "pause": "Pause",
+    "pausing": "Pausing…",
+    "paused": "Paused",
+    "resume": "Continue check",
+    "resumeHint": "Continue skips completed batches and restarts unfinished batches using the current files. Saved page changes are kept.",
+    "finished": "Check finished",
+    "structuralPhase": "Structural check",
+    "semanticPhase": "Business module check",
+    "batchProgress": "Processed {{completed}} / {{total}} batches",
+    "pageProgress": "Processed {{completed}} / {{total}} steps",
+    "progress": "Check progress",
+    "filterType": "Issue type",
+    "allTypes": "All issue types",
+    "filterModule": "Business module",
+    "allModules": "All business modules",
+    "searchIssues": "Search pages or issues",
+    "filteredCount": "Showing {{count}} / {{total}} issues",
+    "selectVisible": "Select current results",
+    "noMatchingIssues": "No issues match these filters",
+    "preparingSemantic": "Preparazione dei controlli per modulo…",
+    "semanticDescription": "Controlla formato, conflitti, duplicati e lacune per modulo. I problemi correggibili vengono sistemati automaticamente; i vecchi percorsi restano come riferimenti. I casi irrisolti passano alla revisione.",
+    "checkIncomplete": "Il controllo non è stato completato. Consulta i motivi indicati.",
+    "checkNeedsModel": "Il controllo semantico richiede un modello configurato.",
     "title": "Lint del wiki",
     "semantic": "Semantico (LLM)",
     "ruleSettings": "Regole di lint",
@@ -463,6 +486,7 @@
       "orphan": "Pagina orfana",
       "broken-link": "Link non valido",
       "no-outlinks": "Nessun link in uscita",
+      "structure": "Formato e struttura",
       "semantic": "Problema semantico"
     },
     "issues": "{{count}} problema",
@@ -493,9 +517,10 @@
     "pendingStatus": "Da revisionare",
     "removedStatus": "Revisione rimossa",
     "resolvedFromConversation": "Risoluzione confermata nella conversazione ({{id}})",
-    "conversationHint": "Verifica prima le fonti. Le modifiche alla Wiki richiedono una tua istruzione esplicita. Confermi tu la risoluzione.",
+    "conversationHint": "Le risposte chiare o le scelte confermate aggiornano direttamente le pagine interessate senza ulteriori conferme. Confermi tu la risoluzione.",
     "conversationEmpty": "Inserisci una domanda, aggiungi fonti o indica come gestire questa revisione.",
     "types": {
+      "merge": "Merge issue",
       "contradiction": "Contraddizione",
       "duplicate": "Duplicato",
       "missing-page": "Pagina mancante",
@@ -581,7 +606,7 @@
           "activeDefault": "Usa il modello attivo",
           "hint": "Scegli modelli distinti per la chat interattiva e per l'elaborazione dei documenti. Il modello attivo resta il fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Usa un modello specifico per il progetto",
           "provider": "Provider del progetto",
           "selectProvider": "Seleziona un provider",
@@ -667,7 +692,6 @@
           "max": "Massimo",
           "custom": "Personalizzato",
           "budgetTokens": "token di budget per il ragionamento",
-
           "hint": "Controlla il ragionamento per la chat. L'elaborazione dei documenti usa l'impostazione separata qui sotto.",
           "ingestTitle": "Ragionamento durante l'ingest",
           "ingestHint": "Di norma va tenuto spento: l'ingest chiede output strutturato e il ragionamento costa tempo senza migliorarlo. Alzalo solo se il modello si rifiuta di funzionare con il ragionamento disattivato."
@@ -706,6 +730,9 @@
         "statsHeading": "Stato dell'indice",
         "chunkCount": "{{count}} chunk indicizzati",
         "lastErrorHeading": "Ultimo errore di embedding",
+        "syncIndex": "Sincronizza indice",
+        "syncDone": "Aggiornate {{count}} pagine, rimosse {{removed}}, saltate {{skipped}}.",
+        "syncHint": "Sincronizza automaticamente le pagine nuove, modificate ed eliminate. Le pagine invariate riutilizzano i vettori.",
         "reindexAll": "Reindicizza tutte le pagine",
         "reindexing": "Indicizzazione {{done}}/{{total}}…",
         "reindexDone": "Indicizzate {{count}} pagine.",
@@ -753,21 +780,16 @@
       "webSearch": {
         "title": "Fonti di informazione esterne",
         "description": "Configura le fonti di informazione esterne utilizzabili da LLM Wiki.",
-        "deepResearchSources": "Modalità fonti per la Deep Research",
-        "deepResearchSourcesHint": "La ricerca web usa il provider online selezionato. AnyTXT cerca nei file locali indicizzati tramite ATGUI.exe su questa macchina.",
-        "sourceWeb": "Ricerca web",
-        "sourceAnyTxt": "AnyTXT",
-        "sourceBoth": "Entrambe",
         "webProviders": "Provider di ricerca web",
         "anyTxtTitle": "Ricerca locale AnyTXT",
-        "anyTxtDescription": "Usa l'API JSON-RPC locale di AnyTXT come fonte per la Deep Research. Tieni ATGUI.exe in esecuzione prima di avviare una ricerca.",
+        "anyTxtDescription": "Usa l'API JSON-RPC locale di AnyTXT come fonte per la chat retrieval. Tieni ATGUI.exe in esecuzione prima di avviare una ricerca.",
         "anyTxtEndpoint": "Endpoint AnyTXT",
         "anyTxtFilterDir": "Cartella di ricerca",
         "anyTxtFilterDirPlaceholder": "Lascia vuoto per l'ambito predefinito di AnyTXT; su Windows imposta un'unità o una cartella se serve",
         "anyTxtFilterExt": "Filtro per estensione",
         "anyTxtLimit": "Numero massimo di risultati locali",
         "anyTxtHint": "Il testo del pattern viene inviato direttamente ad AnyTXT, quindi vale la sua sintassi di ricerca nativa. L'API di AnyTXT è software locale in beta; rispetta i termini d'uso di AnyTXT.",
-        "anyTxtBroadDirWarning": "Questa cartella sembra molto ampia. La Deep Research potrebbe inviare all'LLM selezionato frammenti dei file locali corrispondenti, compresi contenuti sensibili.",
+        "anyTxtBroadDirWarning": "Questa cartella sembra molto ampia. La chat retrieval potrebbe inviare all'LLM selezionato frammenti dei file locali corrispondenti, compresi contenuti sensibili.",
         "expand": "Espandi",
         "collapse": "Comprimi",
         "activate": "Attiva",
@@ -817,8 +839,6 @@
         "autoIngest": "Elabora automaticamente i file sorgente consentiti",
         "autoIngestDescription": "Se disattivo, le modifiche esterne aggiornano comunque l'albero dei file ma non creano attività di elaborazione.",
         "persistExtractedMarkdown": "Conserva il Markdown estratto",
-        "generateSourceSummary": "Genera riepiloghi delle fonti (facoltativo)",
-        "generateSourceSummaryDescription": "Disattivato per impostazione predefinita. Le pagine conservano riferimenti e immagini delle fonti. I riepiloghi esistenti vengono mantenuti.",
         "persistExtractedMarkdownDescription": "Salva il testo estratto dai documenti sotto raw/parsed con la stessa struttura di cartelle di raw/sources.",
         "parsingConcurrency": "Parser di documenti in parallelo",
         "parsingConcurrencyDescription": "Analizza fino a questo numero di documenti importati alla volta. Per sicurezza l'analisi dei PDF resta serializzata internamente.",
@@ -1131,12 +1151,25 @@
     "fileSync": "Sincronizzazione file",
     "rescan": "Riesamina",
     "rescanTitle": "Cerca modifiche esterne nei file del progetto",
-    "changeKinds": { "created": "Creato", "modified": "Modificato", "deleted": "Eliminato" },
+    "changeKinds": {
+      "created": "Creato",
+      "modified": "Modificato",
+      "deleted": "Eliminato"
+    },
     "fileTypes": {
-      "entity": "Entità", "concept": "Concetto", "source": "Fonte", "query": "Query",
-      "synthesis": "Sintesi", "comparison": "Confronto", "finding": "Risultato",
-      "thesis": "Tesi", "methodology": "Metodologia", "overview": "Panoramica",
-      "index": "Indice", "log": "Log", "file": "File"
+      "entity": "Entità",
+      "concept": "Concetto",
+      "source": "Fonte",
+      "query": "Query",
+      "synthesis": "Sintesi",
+      "comparison": "Confronto",
+      "finding": "Risultato",
+      "thesis": "Tesi",
+      "methodology": "Metodologia",
+      "overview": "Panoramica",
+      "index": "Indice",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {
@@ -1196,12 +1229,7 @@
     "lowInternalConnectivity": "Connettività interna bassa: {{count}} link per pagina",
     "surprisingConnections": "Connessioni inaspettate",
     "knowledgeGaps": "Lacune di conoscenza",
-    "deepResearch": "Deep Research",
-    "generatingTopic": "Generazione dell'argomento di ricerca...",
-    "researchTopic": "Argomento di ricerca",
-    "searchQueries": "Query di ricerca",
     "cancel": "Annulla",
-    "startResearch": "Avvia la ricerca",
     "nodeTypeLabels": {
       "entity": "Entità",
       "concept": "Concetto",

@@ -18,10 +18,10 @@ const TOGGLE_LEVELS = ["auto", "off"] as const
 const DEEPSEEK_LEVELS = ["auto", "off", "high", "max"] as const
 const GLM_53_LEVELS = ["auto", "low", "high", "max"] as const
 
-/** 仅对核对过协议的智谱官方 GLM-5.3 启用专属思考控制。 */
+/** 仅对核对过协议的智谱官方 GLM-5.3 / Flash 启用专属思考控制。 */
 export function isBigModelGlm53(config: LlmConfig): boolean {
   if (config.provider !== "custom" || config.apiMode === "anthropic_messages") return false
-  if (config.model.trim().toLowerCase() !== "glm-5.3") return false
+  if (!/^glm-5\.3(?:-flash)?$/i.test(config.model.trim())) return false
   try { return new URL(config.customEndpoint).hostname.toLowerCase() === "open.bigmodel.cn" }
   catch { return false }
 }

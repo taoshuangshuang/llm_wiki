@@ -23,6 +23,11 @@ vi.mock("./ingest-acceptance", () => ({
   runIngestAcceptance: vi.fn(async () => ({ report: { status: "passed", rounds: [] }, reviews: [] })),
 }))
 
+// 本组只验证生成写入；完整后台审阅、十页与串行交接由独立集成测试覆盖。
+vi.mock("./ingest-review", () => ({
+  runIngestReview: vi.fn(async (path: string, runId: string) => { await updateIngestRun(path, runId, (run) => { run.reviewStatus = "complete"; run.reviewRequested = false }) }),
+}))
+
 // Sequenced streamChat: stage-1 returns analysisResponse, stage-2 returns
 // generationResponse. Any further calls return empty (shouldn't happen in a
 // typical autoIngest run).
@@ -40,6 +45,8 @@ vi.mock("./llm-client", () => ({
   }),
 }))
 
+import { listIngestRuns, loadIngestRun, updateIngestRun } from "./ingest-run"
+import { ignoreAndArchiveIngestReview } from "./ingest-review-archive"
 import { autoIngest } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
@@ -62,8 +69,6 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
-  // 旧来源摘要场景显式开启兼容选项；默认关闭的契约另由最终验收集成测试覆盖。
-  useWikiStore.setState({ sourceWatchConfig: { ...useWikiStore.getState().sourceWatchConfig, generateSourceSummary: true } })
   pendingResponses = []
   streamCallCount = 0
   afterStreamToken = null
@@ -206,6 +211,11 @@ describe("ingest scenarios (fixture-driven)", () => {
       )
 
       await assertOutcome(scenario, ctx.tmp.path)
+      if (scenario.name === "defers-generation-review-items") {
+        const [run] = await listIngestRuns(ctx.tmp.path)
+        expect(run.reviewRequested).toBe(false)
+        expect(run.generation?.raw).toContain("---REVIEW:")
+      }
     },
   )
 
@@ -240,7 +250,8 @@ describe("ingest scenarios (fixture-driven)", () => {
       },
     )
 
-    expect(commitCalls).toBe(1)
+    // 提交拆成多个短锁；验证所有写入仍经过同一接口，不绑定内部提交次数。
+    expect(commitCalls).toBeGreaterThan(0)
     expect(written.length).toBeGreaterThan(0)
     expect(writeCallbacks).toBeGreaterThan(0)
   })
@@ -271,10 +282,30 @@ describe("ingest scenarios (fixture-driven)", () => {
       },
     )
 
-    expect(commitCalls).toBe(1)
+    expect(commitCalls).toBeGreaterThan(0)
     expect(cachedWritten).toEqual(firstWritten)
     const activities = useActivityStore.getState().items
     expect(activities.some((item) => item.detail.includes("Skipped (unchanged)"))).toBe(true)
+  })
+
+  it("相同来源命中缓存时不重新排队已忽略并归档的审阅，原失败结果仍保留", async () => {
+    ctx = await setup(ingestScenarios[0])
+    const projectPath = ctx.tmp.path
+    const sourcePath = path.join(projectPath, ingestScenarios[0].source.path)
+    const written = await autoIngest(projectPath, sourcePath, useWikiStore.getState().llmConfig)
+    const run = (await listIngestRuns(projectPath))[0]
+    await updateIngestRun(projectPath, run.runId, (state) => {
+      state.reviewStatus = "incomplete"
+      state.reviewRequested = false
+      state.reviewError = "全库检索未完成"
+    })
+    await ignoreAndArchiveIngestReview(projectPath, run.runId)
+    const calls = streamCallCount
+    expect(await autoIngest(projectPath, sourcePath, useWikiStore.getState().llmConfig)).toEqual(written)
+    expect(streamCallCount).toBe(calls)
+    expect(await loadIngestRun(projectPath, run.runId)).toMatchObject({
+      archived: true, reviewStatus: "incomplete", reviewRequested: false, reviewError: "全库检索未完成", pages: run.pages,
+    })
   })
 
   it("serializes concurrent ingestion of the same source and reuses its cache", async () => {
@@ -362,14 +393,16 @@ describe("ingest scenarios (fixture-driven)", () => {
       ].join("\n"),
     ]
 
-    const written = await autoIngest(
+    // 所有正文都被判定为来源摘要时，即使补写了活动日志，也不能视为成功。
+    await expect(autoIngest(
       projectPath,
       `${projectPath}/raw/sources/schema-routing.md`,
       useWikiStore.getState().llmConfig,
-    )
+    )).rejects.toThrow("未生成有效知识页面")
 
-    expect(written).not.toContain("wiki/concepts/wrong-place.md")
     expect(await fileExists(`${projectPath}/wiki/concepts/wrong-place.md`)).toBe(false)
+    expect(await fileExists(`${projectPath}/.llm-wiki/ingest-cache.json`)).toBe(false)
+    expect((await listIngestRuns(projectPath))[0].writeStatus).toBe("failed")
   })
 
   it("keeps source summaries distinct for same basenames in different source folders", async () => {
@@ -404,9 +437,9 @@ describe("ingest scenarios (fixture-driven)", () => {
     pendingResponses = [
       "analysis for project A",
       [
-        "---FILE: wiki/sources/config.md---",
+        "---FILE: wiki/concepts/project-a-config.md---",
         "---",
-        'type: "source"',
+        'type: "concept"',
         'title: "Source: config.yaml"',
         'sources: ["config.yaml"]',
         "tags: []",
@@ -420,9 +453,9 @@ describe("ingest scenarios (fixture-driven)", () => {
       ].join("\n"),
       "analysis for project B",
       [
-        "---FILE: wiki/sources/config.md---",
+        "---FILE: wiki/concepts/project-b-config.md---",
         "---",
-        'type: "source"',
+        'type: "concept"',
         'title: "Source: config.yaml"',
         'sources: ["config.yaml"]',
         "tags: []",
@@ -448,12 +481,12 @@ describe("ingest scenarios (fixture-driven)", () => {
       cfg,
     )
 
-    expect(firstWritten).toContain("wiki/sources/9-project-a--6-config--3eym4.md")
-    expect(secondWritten).toContain("wiki/sources/9-project-b--6-config--177z4nx.md")
+    expect(firstWritten).toContain("wiki/concepts/project-a-config.md")
+    expect(secondWritten).toContain("wiki/concepts/project-b-config.md")
     expect(await fileExists(`${projectPath}/wiki/sources/config.md`)).toBe(false)
 
-    const projectA = await readFileRaw(`${projectPath}/wiki/sources/9-project-a--6-config--3eym4.md`)
-    const projectB = await readFileRaw(`${projectPath}/wiki/sources/9-project-b--6-config--177z4nx.md`)
+    const projectA = await readFileRaw(`${projectPath}/wiki/concepts/project-a-config.md`)
+    const projectB = await readFileRaw(`${projectPath}/wiki/concepts/project-b-config.md`)
     expect(projectA).toContain('sources: ["project-a/config.yaml"]')
     expect(projectA).toContain("analysis for project A")
     expect(projectB).toContain('sources: ["project-b/config.yaml"]')

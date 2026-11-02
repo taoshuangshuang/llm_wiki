@@ -67,6 +67,8 @@ sha2 = "0.10"
 md-5 = "0.10"
 notify = "8"
 walkdir = "2"
+# 长审阅查询用单遍多模式匹配，保持逐词计分语义并避免反复扫描全文。
+aho-corasick = "1.1.4"
 epub = "2.1.5"
 mobi = "0.8"
 html2text = { version = "0.17.1", default-features = false, features = ["xml"] }

@@ -5,43 +5,25 @@ import { normalizePath } from "./path-utils"
 import { sourceIdentityForPath } from "./source-identity"
 import { observeLlmCalls, type LlmObservation, type ObservedLlmCall } from "./llm-observer"
 import type { StreamCompletion } from "./llm-client"
+import { IngestProcessLog } from "./ingest-process-log"
 
-type RunStatus = "running" | "completed" | "failed" | "cancelled"
+type RunStatus = "running" | "completed" | "failed" | "cancelled" | "skipped"
 interface CallSummary { file: string; stage: string; status: RunStatus | "truncated" }
 interface PageSnapshot { before?: string; after?: string; readError?: string }
-
-/** 只隐藏凭据字段和已知凭据；正文、提示词和模型返回内容保留在项目本地。 */
-function createRedactor(secrets: Set<string>) {
-  const redactText = (text: string): string => {
-    let value = text.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1<REDACTED>@")
-      .replace(/([?&](?:api[_-]?key|token|access_token|secret|password)=)[^&#\s"']*/gi, "$1<REDACTED>")
-    for (const secret of [...secrets].sort((a, b) => b.length - a.length)) value = value.split(secret).join("<REDACTED>")
-    return value
-  }
-  const redact = (value: unknown): unknown => {
-    if (typeof value === "string") return redactText(value)
-    if (Array.isArray(value)) return value.map(redact)
-    if (!value || typeof value !== "object") return value
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
-      /^(?:api[_-]?key|authorization|proxy-authorization|headers|customHeaders|password|secret|token|access_token)$/i.test(key)
-        ? "<REDACTED>" : redact(item),
-    ]))
-  }
-  return redact
-}
 
 /** 每次尝试独立目录；失败重试和成功缓存命中都不会覆盖前次证据。 */
 export class IngestDiagnostics {
   readonly runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID()}`
   readonly directory: string
   readonly config: LlmConfig
+  readonly process: IngestProcessLog
   private queue = Promise.resolve()
   private unavailable = false
-  private secrets = new Set<string>()
-  private redact = createRedactor(this.secrets)
   private pages: Record<string, PageSnapshot> = {}
+  private dirtyPages = new Set<string>()
   private events: Array<{ at: string; stage: string; detail: unknown }> = []
   private pendingCalls = new Set<Promise<void>>()
+  private sourceSkipped = false
   private manifest: {
     version: number; runId: string; mode: string; sourcePath: string; sourceIdentity: string
     startedAt: string; finishedAt?: string; status: RunStatus; cacheHit: boolean
@@ -51,6 +33,7 @@ export class IngestDiagnostics {
   constructor(private projectPath: string, sourcePath: string, config: LlmConfig, mode = "auto") {
     this.projectPath = normalizePath(projectPath).replace(/\/+$/, "")
     this.directory = `${this.projectPath}/.llm-wiki/ingest-diagnostics/${this.runId}`
+    this.process = new IngestProcessLog(this.projectPath, sourcePath, this.runId, mode)
     this.manifest = {
       version: 1, runId: this.runId, mode, sourcePath,
       sourceIdentity: sourceIdentityForPath(projectPath, sourcePath),
@@ -61,23 +44,13 @@ export class IngestDiagnostics {
 
   /** 图片描述可能使用另一组配置，也要绑定到同一次导入。 */
   observe(config: LlmConfig): LlmConfig {
-    for (const secret of [config.apiKey, ...Object.values(config.customHeaders ?? {})]) {
-      if (secret) this.secrets.add(secret)
-    }
-    for (const endpoint of [config.customEndpoint, config.ollamaUrl]) {
-      try {
-        const url = new URL(endpoint)
-        for (const secret of [url.username, url.password]) if (secret) this.secrets.add(secret)
-        url.searchParams.forEach((value, key) => {
-          if (/key|token|secret|password/i.test(key) && value) this.secrets.add(value)
-        })
-      } catch { /* 供应商配置校验仍由原链路负责。 */ }
-    }
+    this.process.registerSecrets(config)
     return observeLlmCalls(config, (call) => this.beginCall(call))
   }
 
   /** 先写入运行状态，便于识别应用异常退出留下的未结束任务。 */
   async start(): Promise<void> {
+    this.process.record("execution-start", { ...this.manifest, appVersion: typeof __APP_VERSION__ === "undefined" ? "unknown" : __APP_VERSION__ })
     await this.save("manifest.json", this.manifest)
   }
 
@@ -86,9 +59,10 @@ export class IngestDiagnostics {
     await this.start()
     try {
       const result = await operation()
+      this.process.record("execution-result", { result })
       const failed = Array.isArray(result) ? result.length === 0
         : this.manifest.calls.some((call) => call.status === "failed")
-      await this.finish(signal?.aborted ? "cancelled" : failed ? "failed" : "completed")
+      await this.finish(signal?.aborted ? "cancelled" : this.sourceSkipped ? "skipped" : failed ? "failed" : "completed")
       return result
     } catch (error) {
       await this.finish(signal?.aborted ? "cancelled" : "failed", error)
@@ -96,11 +70,18 @@ export class IngestDiagnostics {
     }
   }
 
+  /** 明确记录前置过滤，避免空结果被诊断层误判为失败。 */
+  skipSource(reason: unknown): void {
+    this.sourceSkipped = true
+    this.event("source-skipped", reason)
+  }
+
   /** 固定文件名由调用方代码控制；不允许模型输出决定诊断目录。 */
   save(name: string, value: unknown): Promise<void> {
+    if (name !== "manifest.json" && name !== "events.json" && !name.startsWith("call-")) this.process.record("snapshot", { name, value })
     if (this.unavailable) return this.queue
     let contents: string
-    try { contents = JSON.stringify(this.redact(value), null, 2) }
+    try { contents = JSON.stringify(this.process.sanitize(value), null, 2) }
     catch { this.disable(); return this.queue }
     this.queue = this.queue.then(async () => {
       if (this.unavailable) return
@@ -114,6 +95,7 @@ export class IngestDiagnostics {
 
   /** 保存阶段决策和程序处理结果，不把它们混入模型正文。 */
   event(stage: string, detail: unknown = {}): void {
+    this.process.record("decision", detail, stage)
     if (this.unavailable) return
     this.events.push({ at: new Date().toISOString(), stage, detail })
     void this.save("events.json", this.events)
@@ -130,6 +112,7 @@ export class IngestDiagnostics {
   beforeWrite(path: string, content: string): void {
     if (this.unavailable) return
     this.pages[path] ??= { before: content }
+    this.dirtyPages.add(path)
     void this.save("pages.json", this.pages)
   }
 
@@ -138,12 +121,16 @@ export class IngestDiagnostics {
     const normalized = normalizePath(path)
     const relative = normalized.startsWith(`${this.projectPath}/`) ? normalized.slice(this.projectPath.length + 1) : normalized
     if (!this.manifest.writtenPaths.includes(relative)) this.manifest.writtenPaths.push(relative)
+    this.dirtyPages.add(relative)
   }
 
-  /** 在项目提交锁内读取，避免下一份资料的写入被误当成本轮结果。 */
+  /** 在短提交内只采集本轮变更的页面，避免重复读全量结果或混入其他任务后续写入。 */
   async capturePages(): Promise<void> {
     if (this.unavailable) return
-    for (const path of new Set([...Object.keys(this.pages), ...this.manifest.writtenPaths])) {
+    const paths = [...this.dirtyPages]
+    this.dirtyPages.clear()
+    if (!paths.length) return
+    for (const path of paths) {
       this.pages[path] ??= {}
       try { this.pages[path].after = await readFile(`${this.projectPath}/${path}`) }
       catch (error) { this.pages[path].readError = String(error) }
@@ -161,6 +148,8 @@ export class IngestDiagnostics {
       ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) }
     await this.save("manifest.json", this.manifest)
     await this.queue
+    this.process.record("execution-finish", { status, error, writtenPaths: this.manifest.writtenPaths })
+    await this.process.flush()
   }
 
   /** 记录不可用时只警告一次，避免磁盘故障反复干扰导入。 */
@@ -172,7 +161,8 @@ export class IngestDiagnostics {
 
   /** 为单次模型调用分配文件，并定期保存流式返回的中间正文。 */
   private beginCall(call: ObservedLlmCall): LlmObservation | undefined {
-    if (this.unavailable) return undefined
+    const processCall = this.process.observeCall(call)
+    if (this.unavailable) return processCall
     const file = `call-${String(this.manifest.calls.length + 1).padStart(4, "0")}.json`
     const summary: CallSummary = { file, stage: call.stage, status: "running" }
     this.manifest.calls.push(summary)
@@ -200,22 +190,25 @@ export class IngestDiagnostics {
     void persist()
     void this.save("manifest.json", this.manifest)
     return {
-      request: async (url, body) => { record.requests.push({ url, body }); await persist() },
+      request: async (url, body) => { await processCall.request(url, body); record.requests.push({ url, body }); await persist() },
       httpStatus: (status) => {
+        processCall.httpStatus(status)
         const request = record.requests[record.requests.length - 1]
         if (request) request.status = status
         dirty = true
       },
       rawResponse: (text) => {
+        processCall.rawResponse(text)
         const raw = record.transportResponse
         raw.observedChars += text.length
         raw.tail = (raw.tail + text).slice(-65536)
         raw.tailOnly = raw.observedChars > raw.tail.length
         dirty = true
       },
-      token: (text) => { if (!this.unavailable) { record.response.content += text; dirty = true } },
-      done: (completion) => { record.completion = completion },
+      token: (text) => { processCall.token(text); if (!this.unavailable) { record.response.content += text; dirty = true } },
+      done: (completion) => { processCall.done(completion); record.completion = completion },
       error: (error) => {
+        processCall.error(error)
         record.error = error instanceof Error
           ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) }
       },
@@ -224,7 +217,7 @@ export class IngestDiagnostics {
         record.status = aborted ? "cancelled" : record.error ? "failed" : record.completion?.truncated ? "truncated" : "completed"
         record.finishedAt = new Date().toISOString()
         summary.status = record.status
-        try { await persist(); await this.save("manifest.json", this.manifest) }
+        try { await processCall.finish(aborted); await persist(); await this.save("manifest.json", this.manifest) }
         finally { settle(); this.pendingCalls.delete(finished) }
       },
     }

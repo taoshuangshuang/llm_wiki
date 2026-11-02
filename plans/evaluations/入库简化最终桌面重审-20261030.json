@@ -1,0 +1,164 @@
+{
+  "testProject": "/private/tmp/llm-wiki-simplify-validation/project",
+  "runs": [
+    {
+      "runId": "0d59bf90-bd22-4cef-8cd8-f61612fcbc21",
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202601.md",
+      "writeStatus": "complete",
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "not-applicable",
+          "reason": "当前页已由后续操作修改；原来源转换的校验保留原版本报告"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "batchId": "57a3bc532ec212997b0d4a9689c85be530f901fc2a74ff11d8939e14fa680e7b",
+          "status": "complete",
+          "elapsedMs": 17612,
+          "retrievalStatus": "completed"
+        },
+        {
+          "batchId": "75c5cb9a03d7c5494c9d397d591ed7e9f9edee70d106365737a797a0ac121134",
+          "status": "complete",
+          "elapsedMs": 12929,
+          "retrievalStatus": "completed"
+        }
+      ],
+      "repairs": [
+        {
+          "id": "2e32ed85-b9f3-4958-9eae-9e45908ccf86",
+          "stage": "merge",
+          "status": "verified",
+          "reason": "一轮重新合并通过结果校验且实际提交完成，内容保真由后续内容检查核对",
+          "paths": [
+            "wiki/cases/LYJM-167368-meta_class_type被改为10导致特征物理列被覆盖.md"
+          ]
+        },
+        {
+          "id": "8954a2f3-f957-486a-b6b3-a5bd131d45de",
+          "stage": "knowledge",
+          "status": "verified",
+          "reason": "两处重复均已按建议处理：(1) KKZC-73200 与 LYJM-168064 完整陈述集中保留于「imeta升级与二开适配限制」（现象、原因、处理与工单号齐全，独有的 QuerySchema 穿透、导出枚举穿透、审批接口字段重复及 arthas/SQL 证据均保留）；「R5到R6升级与去Mongo常见问题」精简为两条现象摘要加指引（'集中记录于 [[imeta升级与二开适配限制]]，本页不再重复维护'），两条工单号与报错信息保留，其余独有条目（基类识别、HXRL-161334、LYJM-168254、ISV 二方包等）未受影响。(2) LYJM-167579 拟议规则完整陈述保留于约束页（含'供应链/财务级联取消分配规则（待确认）'章节标题，与两处指引引用的章节名一致）；case 页保留独有现象/原因并改为指引；汇总页改为索引条目，保留工单号与'待确认，不作为已定约束使用'的边界声明。三处结论一致，无事实分歧，未引入无依据事实或错误引用。",
+          "paths": [
+            "wiki/topics/R5到R6升级与去Mongo常见问题.md",
+            "wiki/cases/LYJM-167579-供应链级联父节点单独取消分配致特征数据不可见.md",
+            "wiki/cases/特征约束与数据规则类支持问题汇总.md"
+          ]
+        },
+        {
+          "id": "e4ffbb36-514a-4ad5-ad32-2dc7fae03d5f",
+          "stage": "knowledge",
+          "status": "verified",
+          "reason": "after-7 已收敛为本工单内容：仅保留 LYJM-168023 的现象/原因/处理（与来源条目 32 一致，含参考链接 pageId=83392265），四个重复小节（LYJM-167439、LYJM-168016、LYJM-167673、LYJM-167701）不再完整收录，改为在「相关翻译类问题」小节引用 [[参照与翻译类支持问题汇总]] 与 [[元数据缓存失效与实体删除清理]]，与 issues 建议的收敛方式一致。各页用途明确：汇总页与缓存 FAQ 保留为准，本页聚焦本工单并保留链接。来源事实（现象、两条处理步骤、链接、'现场初步定位未源码验证'的边界声明、排查要点）均保留，未引入无依据事实。唯一差异为 tags 中 module/platform-multilang 改为 module/feature，属元数据标签调整，不影响事实内容。",
+          "paths": [
+            "wiki/cases/LYJM-168023-特征字段导入不翻译或翻译重复.md"
+          ]
+        },
+        {
+          "id": "8f1672a1-d8ec-49c6-88f0-a3f048266d21",
+          "stage": "knowledge",
+          "status": "failed",
+          "reason": "修复复查失败：Error: 案例页已移除重复的 arthas watch 命令并改用链接引用，独有信息（V3_R5 场景、验证边界、清理步骤）保留，重复处理方向正确。但无法核实两点：1) 案例页引用实践页的\"定位审批流业务对象描述脏数据（LYJM-167444）\"一节标题，材料中实践页仅有命令与清理步骤（sha256:7393bcc... 第15-23行附近），未见该节标题或参数说明的证据，无法确认引用有效且不构成错误引用；2) 原案例页的参数说明（\"实体uri 替换为实际实体 uri，租户 id 替换为现场实际租户\"）随命令移除，issue 要求参数说明集中保留于实践页，但材料未提供实践页包含参数说明的内容证据。需先确认实践页实际包含该节标题与参数说明，方可通过。",
+          "paths": [
+            "wiki/cases/LYJM-167444-审批流业务对象查询失败-imeta-toString特殊字符.md"
+          ]
+        }
+      ]
+    },
+    {
+      "runId": "f04a2541-3b5a-4da7-8caa-2910cd7a7105",
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202602.md",
+      "writeStatus": "complete",
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "batchId": "73c56a8910d3bf0c3cf8eec08275f41ea49d2cd7aec1a265b8da6ee6b2a365d9",
+          "status": "complete",
+          "elapsedMs": 21887,
+          "retrievalStatus": "completed"
+        }
+      ],
+      "repairs": []
+    },
+    {
+      "runId": "3b840e65-41f9-44cb-a2f4-4dd6632339b1",
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202512.md",
+      "writeStatus": "complete",
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "not-applicable",
+          "reason": "当前页已由后续操作修改；原来源转换的校验保留原版本报告"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "batchId": "405288e74feccd6551d24f3b8bbd28782ca09f45a7f73e17c805e0de842990e6",
+          "status": "complete",
+          "elapsedMs": 23003,
+          "retrievalStatus": "completed"
+        },
+        {
+          "batchId": "039df0df5d8a47c8b69e109c93579e90783739c50a0b52559c3d02643a803e7d",
+          "status": "complete",
+          "elapsedMs": 14054,
+          "retrievalStatus": "completed"
+        }
+      ],
+      "repairs": [
+        {
+          "id": "a0cd18f2-01e2-4ac8-9546-129907e2bc15",
+          "stage": "knowledge",
+          "status": "verified",
+          "reason": "三个重复问题均已按建议处理：1) LYJM-165369 月度页已改为指向[[元数据缓存清理不足问题]]的索引，保留现象简述与推测原因指向，权威记录保留在缓存专题页（含判断条件表中原有LYJM-165369条目）；2) LYJM-166933 概念页表格行已精简为索引指向[[init-ddl导出与出盘脚本缺陷]]，三个共表元数据URI与停用状态、20260115限制等独有细节保留于专题页；related 已补充该页引用；3) LYJM-165257 升级主题页改为引用迁移FAQ页为主记录（含待确认标注），FAQ页保留完整记录，related 已补充该页。各页用途区分明确（月度归集入口/机制归纳 vs 修复细节/迁移故障汇总 vs 升级版本差异），未发现事实改写、无依据新增或引用失效；两处referenced页面（缓存页、init-ddl页）现有记录足以承接被指向内容。",
+          "paths": [
+            "wiki/cases/DSP支持工单问题集-202512.md",
+            "wiki/concepts/R6-特征实体共表与元数据层级合并的已知问题模式.md",
+            "wiki/topics/R5到R6升级与去Mongo常见问题.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "originalRepairIdsRetained": true,
+  "manualStateRetained": true,
+  "uiFinalVerified": true,
+  "uiVerifiedAt": "2026-10-30T08:34:00+08:00",
+  "returnedToMainProject": "/Users/taoshuang/note/元数据-LLM-WIKI",
+  "pendingContentItems": 10,
+  "activeValidationRuns": 0
+}

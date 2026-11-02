@@ -13,6 +13,8 @@
     "rejected": "已拒绝",
     "history": "审核记录",
     "refresh": "刷新",
+    "move": "移动至 {{path}}",
+    "moveHint": "将原文移动到目标位置，并同步更新引用与相对资源路径；目标存在时不会覆盖。",
     "modify": "修改",
     "delete": "删除档案",
     "diffHint": "红色删除线表示删除，绿色表示新增。",
@@ -26,11 +28,24 @@
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
   "common": {
-    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭", "ok": "确定", "confirm": "确认", "notice": "提示",
-    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+    "retry": "重试",
+    "cancel": "取消",
+    "ignore": "忽略",
+    "close": "关闭",
+    "ok": "确定",
+    "confirm": "确认",
+    "notice": "提示",
+    "dismiss": "关闭",
+    "loading": "加载中……",
+    "optional": "可选"
   },
-  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
-  "errors": { "generic": "出现错误" },
+  "layout": {
+    "showSidebar": "展开侧栏",
+    "hideSidebar": "收起侧栏"
+  },
+  "errors": {
+    "generic": "出现错误"
+  },
   "mermaid": {
     "renderFailed": "无法渲染 Mermaid 图表",
     "showDetails": "查看解析器详情",
@@ -39,6 +54,7 @@
     "diagram": "图表"
   },
   "nav": {
+    "imports": "导入过程",
     "chat": "对话",
     "wiki": "Wiki",
     "sources": "原始资料",
@@ -51,7 +67,9 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
-    "updateAvailableSuffix": " · 有更新"
+    "updateAvailableSuffix": " · 有更新",
+    "workflow": "知识流程",
+    "browseSearch": "知识浏览与搜索"
   },
   "updateBanner": {
     "message": "新版本 {{version}} 已发布",
@@ -66,7 +84,7 @@
   "sidebar": {
     "businessModules": "业务",
     "moduleLoading": "正在读取业务模块…",
-    "moduleSetup": "请在 schema.md 的 Business Modules 章节配置 JSON 模块字典。",
+    "moduleSetup": "请在 business-modules.md 的 Business Modules 章节配置 JSON 模块字典；兼容 schema.md 中的旧配置。",
     "moduleEmpty": "此模块暂无页面。",
     "moduleUnreadable": "有 {{count}} 个 Wiki 项无法读取。",
     "knowledge": "知识库",
@@ -76,10 +94,29 @@
     "allSources": "全部资料",
     "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
     "typeLabels": {
-      "overview": "概览", "entity": "实体", "concept": "概念",
-      "source": "来源", "synthesis": "综合", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论",
-      "comparison": "比较", "query": "查询"
+      "module": "模块",
+      "topic": "主题",
+      "data-model": "模型",
+      "design": "设计",
+      "implementation": "实现",
+      "constraint": "约束",
+      "interface": "接口",
+      "integration": "接入",
+      "practice": "操作",
+      "faq": "排障",
+      "case": "工单",
+      "legacy": "旧版",
+      "other": "其他",
+      "overview": "概览",
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "synthesis": "综合",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "comparison": "比较",
+      "query": "查询"
     }
   },
   "editor": {
@@ -121,34 +158,11 @@
       "createFailed": "无法创建缺失页面。",
       "emptyDraftError": "模型返回了空白草稿。"
     },
-    "frontmatter": { "origin": "来源", "more": "更多" },
+    "frontmatter": {
+      "origin": "来源",
+      "more": "更多"
+    },
     "rawMarkdownEditor": "Markdown 源码编辑器"
-  },
-  "research": {
-    "title": "深度研究",
-    "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
-    "activeBadge": "{{running}} 个运行中{{queued, plural, =0 {} other {，{{queued}} 个排队中}}}",
-    "inputPlaceholder": "输入研究主题...",
-    "emptyTitle": "还没有研究任务",
-    "emptyHint": "在上方输入主题，或在待审阅中点击深度研究",
-    "sourcesCount": "来源（{{count}}）",
-    "anyTxtSource": "AnyTXT 来源",
-    "webSource": "网页来源",
-    "synthesis": "综合结果",
-    "thinking": "思考中",
-    "open": "打开",
-    "retry": "重试",
-    "rerun": "重新执行",
-    "remove": "移除",
-    "status": {
-      "queued": "排队中",
-      "searching": "正在搜索来源...",
-      "synthesizing": "正在综合...",
-      "saving": "正在保存到 Wiki...",
-      "saved": "已保存",
-      "done": "已完成",
-      "failed": "失败"
-    }
   },
   "project": {
     "createTitle": "新建 Wiki 项目",
@@ -166,7 +180,7 @@
     "requiredMarker": "*",
     "browse": "选择父目录",
     "aiOutputLanguage": "AI 输出语言",
-    "aiOutputLanguageHint": "所有 AI 生成的内容（Wiki 页面、聊天回复、Research 结果）都将使用此语言。您可以在设置 → 输出 中稍后更改。",
+    "aiOutputLanguageHint": "所有 AI 生成的内容（Wiki 页面、聊天回复、Research 结果）都将使用此语言。您可以在知识流程 → 输出 中稍后更改。",
     "pickLanguage": "选择语言..."
   },
   "templates": {
@@ -268,6 +282,7 @@
       "applying": "正在应用……"
     },
     "agentChanges": {
+      "deleted": "已删除页面；相关引用已按工具结果清理。",
       "title": "Agent 文件修改",
       "taskTitle": "Agent 活动",
       "fileCount": "{{count}} 个文件",
@@ -419,6 +434,30 @@
     "startSearching": "输入关键词搜索 Wiki 页面"
   },
   "lint": {
+    "awaitingIssues": "检查仍在进行，暂未收到符合筛选条件的问题。",
+    "pause": "暂停",
+    "pausing": "正在暂停…",
+    "paused": "已暂停",
+    "resume": "继续检查",
+    "resumeHint": "继续时跳过已完成批次，未完成批次按当前实际文件重新检查；已保存的页面修改会保留。",
+    "finished": "本轮检查结束",
+    "structuralPhase": "结构检查",
+    "semanticPhase": "业务模块检查",
+    "batchProgress": "已处理 {{completed}} / {{total}} 批次",
+    "pageProgress": "已处理 {{completed}} / {{total}} 步",
+    "progress": "检查进度",
+    "filterType": "问题类型",
+    "allTypes": "全部问题类型",
+    "filterModule": "业务模块",
+    "allModules": "全部业务模块",
+    "searchIssues": "搜索页面或问题",
+    "filteredCount": "显示 {{count}} / {{total}} 项",
+    "selectVisible": "全选当前结果",
+    "noMatchingIssues": "没有符合筛选条件的问题",
+    "preparingSemantic": "准备按模块检查…",
+    "semanticDescription": "按业务模块检查格式、冲突、重复和知识补充；可确定的格式及重复问题自动整理，旧页面保留引用，未解决事项进入审阅。",
+    "checkIncomplete": "本次检查未完成，请查看具体原因。",
+    "checkNeedsModel": "语义检查需要可用的模型配置。",
     "title": "Wiki 检查",
     "semantic": "语义检查 (LLM)",
     "ruleSettings": "检查规则",
@@ -463,12 +502,17 @@
       "orphan": "孤立页面",
       "broken-link": "失效链接",
       "no-outlinks": "无出站链接",
+      "structure": "格式与结构问题",
       "semantic": "语义问题"
     },
     "issues": "{{count}} 个问题",
     "issues_plural": "{{count}} 个问题"
   },
   "review": {
+    "importance": "审阅重要程度",
+    "important": "重要",
+    "optional": "非重要",
+    "categoryClear": "本分类暂无待审阅事项",
     "title": "待审阅项",
     "clearResolved": "清除已解决",
     "refresh": "刷新",
@@ -493,23 +537,24 @@
     "pendingStatus": "待审阅",
     "removedStatus": "条目已移除",
     "resolvedFromConversation": "通过审阅会话确认已解决（会话：{{id}}）",
-    "conversationHint": "先核对证据；明确要求修改后才更新 Wiki。由你确认条目已解决。",
+    "conversationHint": "明确回复或确认选择后直接更新相关页面，无需再次确认。由你确认条目已解决。",
     "conversationEmpty": "输入想核查的问题，或补充证据和处理意见。",
     "starters": {
       "title": "请确认这条问题中的具体结论",
-      "hint": "也可以直接在下方补充其他结论、适用条件或证据。",
+      "hint": "确认明确结论后将直接修改相关页面；暂不确定的部分先核查。也可在下方补充意见。",
       "loading": "正在判断是否有适合选择的确认项…",
       "failed": "暂时无法生成可选结论，请重试或直接在下方输入。",
       "uncertain": "暂不确定，请先核查证据",
       "submit": "确认选择并继续",
-      "message": "以下是我对本条审阅问题的选择。请据此核查证据并给出具体处理建议；暂不修改页面，也不要自动关闭审阅条目。"
+      "message": "以下是我对本条审阅问题的回复。对已明确的结论或处理方式，请直接修改相关 Wiki 页面，不要再次询问是否修改，也不要只给处理建议；选择‘暂不确定，请先核查证据’的部分先核查，不推断为已确认。若仍缺少会影响修改结果的必要信息，仅追问该部分。保留无关内容和来源引用，完成后简要说明实际修改的页面，不要自动关闭审阅条目。"
     },
     "types": {
+      "merge": "合并问题",
       "contradiction": "冲突",
       "duplicate": "重复",
-      "missing-page": "缺页",
+      "missing-page": "知识补充建议",
       "confirm": "待确认",
-      "suggestion": "建议",
+      "suggestion": "知识补充建议",
       "structure": "结构规范",
       "coverage": "内容遗漏"
     }
@@ -590,7 +635,7 @@
           "activeDefault": "使用当前活跃模型",
           "hint": "可为交互聊天和文档摄取分别选择模型；未指定时继续使用当前活跃模型。"
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "为当前项目使用独立模型",
           "provider": "项目 Provider",
           "selectProvider": "选择 Provider",
@@ -676,7 +721,6 @@
           "max": "最大",
           "custom": "自定义",
           "budgetTokens": "thinking token 预算",
-
           "hint": "控制聊天时的推理强度；文档摄取使用下方的独立设置。",
           "ingestTitle": "导入时的推理",
           "ingestHint": "通常应关闭：导入需要结构化输出，推理只会增加耗时而无助于质量。仅当模型拒绝在关闭推理的情况下运行时才调高。"
@@ -715,6 +759,9 @@
         "statsHeading": "索引状态",
         "chunkCount": "已索引 {{count}} 个 chunk",
         "lastErrorHeading": "上次 embedding 错误",
+        "syncIndex": "增量同步索引",
+        "syncDone": "更新 {{count}} 页，清理 {{removed}} 页，跳过 {{skipped}} 页。",
+        "syncHint": "自动同步新增、修改和删除的页面，未变化页面不重复计算向量；模型或分块设置变化时重新索引。",
         "reindexAll": "重新索引全部页面",
         "reindexing": "索引中 {{done}}/{{total}}…",
         "reindexDone": "已索引 {{count}} 个页面。",
@@ -732,7 +779,7 @@
         "stateOn": "已开启",
         "stateOff": "已关闭",
         "useMainLabel": "使用主 LLM 生成 caption",
-        "useMainHint": "复用「设置 → LLM Provider」里选的模型。仅当主模型支持图像输入时打开 —— 纯文本模型会返回 400。",
+        "useMainHint": "复用「知识流程 → 公共设置 → 模型与任务路由」里选的模型。仅当主模型支持图像输入时打开 —— 纯文本模型会返回 400。",
         "dedicatedHeading": "独立视觉端点",
         "provider": "Provider",
         "ollamaUrl": "Ollama URL",
@@ -762,21 +809,16 @@
       "webSearch": {
         "title": "外部信息源",
         "description": "配置 LLM Wiki 可以使用的外部信息来源。",
-        "deepResearchSources": "深度研究来源模式",
-        "deepResearchSourcesHint": "网页搜索使用当前选中的在线搜索 Provider。AnyTXT 会通过本机 ATGUI.exe 的本地索引搜索文件内容。",
-        "sourceWeb": "网页搜索",
-        "sourceAnyTxt": "AnyTXT",
-        "sourceBoth": "两者都用",
         "webProviders": "网页搜索 Provider",
         "anyTxtTitle": "AnyTXT 本地文件搜索",
-        "anyTxtDescription": "把 AnyTXT 的本地 JSON-RPC API 作为 Deep Research 的信息来源。开始研究前请保持 ATGUI.exe 运行。",
+        "anyTxtDescription": "通过本机 ATGUI.exe 的 JSON-RPC API 检索本地文件，供聊天检索使用。",
         "anyTxtEndpoint": "AnyTXT 端点",
         "anyTxtFilterDir": "搜索文件夹",
         "anyTxtFilterDirPlaceholder": "留空则使用 AnyTXT 默认范围；Windows 如需其他盘符请指定盘符或文件夹",
         "anyTxtFilterExt": "扩展名过滤",
         "anyTxtLimit": "最多本地结果数",
         "anyTxtHint": "AnyTXT pattern 会直接传给 AnyTXT，因此会使用 AnyTXT 自己的搜索语法。AnyTXT API 是本地 Beta 能力，请遵守 AnyTXT 的使用条款。",
-        "anyTxtBroadDirWarning": "这个目录范围很大。Deep Research 可能会把匹配到的本地文件片段（包括敏感内容）发送给当前选择的 LLM。",
+        "anyTxtBroadDirWarning": "这个目录范围很大。检索到的本地文件片段会作为上下文发送给当前选择的 LLM。",
         "expand": "展开",
         "collapse": "收起",
         "activate": "启用",
@@ -826,12 +868,12 @@
         "autoIngest": "自动提取允许的原始资料文件",
         "autoIngestDescription": "关闭后，外部变化仍会刷新文件树，但不会创建提取任务。",
         "persistExtractedMarkdown": "保留解析后的 Markdown",
-        "generateSourceSummary": "生成来源摘要（可选）",
-        "generateSourceSummaryDescription": "默认关闭。知识页通过 sources 追溯原文，配图附到知识页；开启后额外生成导读页。已有摘要保持原样。",
         "persistExtractedMarkdownDescription": "将文档解析出的文本按 raw/sources 的目录结构保存到 raw/parsed。",
         "parsingConcurrency": "文档解析并发数",
         "parsingConcurrencyDescription": "最多同时解析这些数量的导入文档。为保证安全，PDF 解析器内部仍会串行执行。",
         "ingestConcurrency": "资料提取并发数",
+        "serialIngestCount": "串行入库任务数",
+        "serialIngestDescription": "来源、子块和审阅批次统一串行执行，当前子块本轮审阅结束后再处理下一块。",
         "ingestConcurrencyDescription": "同时准备这些数量的原始资料，Wiki 写入仍会保持顺序。更高的数值会占用更多模型容量和内存。",
         "noProject": "打开项目后才能修改这个项目级设置。",
         "fileTypes": "允许的文件类型",
@@ -1140,12 +1182,25 @@
     "fileSync": "文件同步",
     "rescan": "重新扫描",
     "rescanTitle": "扫描项目文件的外部变更",
-    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "changeKinds": {
+      "created": "已创建",
+      "modified": "已修改",
+      "deleted": "已删除"
+    },
     "fileTypes": {
-      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
-      "synthesis": "综合", "comparison": "比较", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论", "overview": "概览",
-      "index": "索引", "log": "日志", "file": "文件"
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "query": "查询",
+      "synthesis": "综合",
+      "comparison": "比较",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "overview": "概览",
+      "index": "索引",
+      "log": "日志",
+      "file": "文件"
     }
   },
   "fileTree": {
@@ -1205,12 +1260,7 @@
     "lowInternalConnectivity": "内部连接较少：平均每页 {{count}} 条链接",
     "surprisingConnections": "意外连接",
     "knowledgeGaps": "知识缺口",
-    "deepResearch": "深度研究",
-    "generatingTopic": "正在生成研究主题...",
-    "researchTopic": "研究主题",
-    "searchQueries": "搜索查询",
     "cancel": "取消",
-    "startResearch": "开始研究",
     "nodeTypeLabels": {
       "entity": "实体",
       "concept": "概念",

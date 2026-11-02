@@ -580,7 +580,7 @@ describe("real-embedding RAG pipeline — multi-page retrieval", () => {
       // search delegates to cosine-sim over that store. No other
       // Tauri commands are called by the pipeline.
       mockInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "vector_upsert_chunks") {
+        if (cmd === "vector_upsert_chunks" || cmd === "vector_upsert_indexed_chunks") {
           const payload = args as {
             pageId: string
             chunks: Array<{

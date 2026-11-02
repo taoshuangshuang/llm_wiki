@@ -402,11 +402,35 @@ describe("stripMergeScaffolding", () => {
 })
 
 // ──────────────────────────────────────────────────────────────────
-// LLM failure / sanity rejection — always falls back safely
+// 合并失败或结果不合格时抛错，由调用方保留旧页并交给队列重试。
 // ──────────────────────────────────────────────────────────────────
 
-describe("mergePageContent — LLM failure fallback", () => {
-  it("falls back to array-merged incoming when LLM throws", async () => {
+describe("mergePageContent — 合并失败保护", () => {
+  it.each(["existing", "incoming"])("表格仅压缩排版空白时允许合并：%s", async (paddedSide) => {
+    // 两份输入包含相同字段；大量对齐空格、制表符和换行不代表额外知识。
+    const compact = "| 字段 | 类型 | 说明 |\n|---|---|---|\n| id | String | 唯一标识 |"
+    const padded = compact.replace(/ \|/g, `${" ".repeat(80)}\t|`) + "\n\n\u3000"
+    const existing = PAGE("type: entity\ntitle: Foo", paddedSide === "existing" ? padded : compact)
+    const incoming = PAGE("type: entity\ntitle: Foo", paddedSide === "incoming" ? padded : compact)
+    const merger = vi.fn().mockResolvedValue(PAGE("type: entity\ntitle: Foo", compact))
+
+    const result = await mergePageContent(incoming, existing, merger, baseOpts)
+
+    expect(merger).toHaveBeenCalledOnce()
+    expect(result).toContain(compact)
+  })
+
+  it("大量空白不能掩盖合并稿实际删除正文", async () => {
+    // 输出长度即使被空格补足，丢失大部分正文时仍必须拒绝覆盖旧页。
+    const existing = PAGE("type: entity\ntitle: Foo", "必须保留的字段说明。".repeat(100))
+    const incoming = PAGE("type: entity\ntitle: Foo", "新增字段说明。".repeat(100))
+    const merger = vi.fn().mockResolvedValue(PAGE("type: entity\ntitle: Foo", "摘要" + " \t\n".repeat(1000)))
+
+    await expect(mergePageContent(incoming, existing, merger, baseOpts))
+      .rejects.toThrow("正文缩减过多")
+  })
+
+  it("模型报错时透传异常，不返回会覆盖旧页的新稿", async () => {
     const existing = PAGE(
       'type: entity\ntitle: Foo\ntags: [old]\nsources: ["a.pdf"]',
       "old body content",
@@ -416,14 +440,8 @@ describe("mergePageContent — LLM failure fallback", () => {
       "new body content",
     )
     const merger = vi.fn().mockRejectedValue(new Error("LLM rate limited"))
-    const out = await mergePageContent(incoming, existing, merger, baseOpts)
-
-    // Array fields are still merged (no LLM needed for that)
-    expect(out).toMatch(/tags:\s*\[\s*"old",\s*"new"\s*\]/)
-    expect(out).toMatch(/sources:\s*\[\s*"a.pdf",\s*"b.pdf"\s*\]/)
-    // Body is the new (incoming) one — old body is lost; this is the
-    // pre-LLM-merge behavior, the documented fallback contract.
-    expect(out).toContain("new body content")
+    await expect(mergePageContent(incoming, existing, merger, baseOpts))
+      .rejects.toThrow("LLM rate limited")
   })
 
   it("rejects LLM output that shrinks body below 70% of max(old, new)", async () => {
@@ -433,10 +451,9 @@ describe("mergePageContent — LLM failure fallback", () => {
     const merger = vi.fn().mockResolvedValue(
       PAGE("type: entity\ntitle: Foo", "tiny merged body"),
     )
-    const out = await mergePageContent(incoming, existing, merger, baseOpts)
-    // Should fall back to incoming (array-merged) — not the tiny LLM output
-    expect(out).not.toContain("tiny merged body")
-    expect(out).toContain("incoming body that is also pretty long")
+    // 输出过短时拒绝整份合并稿，不能回退为仅包含新来源的正文。
+    await expect(mergePageContent(incoming, existing, merger, baseOpts))
+      .rejects.toThrow("正文缩减过多")
   })
 
   it("rejects LLM output that has no frontmatter at all", async () => {
@@ -445,22 +462,20 @@ describe("mergePageContent — LLM failure fallback", () => {
     const merger = vi.fn().mockResolvedValue(
       "raw markdown with no frontmatter at all and definitely no opening triple-dash",
     )
-    const out = await mergePageContent(incoming, existing, merger, baseOpts)
-    // Falls back to incoming — never writes frontmatter-less output to disk
-    expect(out.startsWith("---")).toBe(true)
-    expect(out).toContain("new body content here")
+    await expect(mergePageContent(incoming, existing, merger, baseOpts))
+      .rejects.toThrow("frontmatter")
   })
 
-  it("calls the optional backup callback when falling back", async () => {
+  it("合并失败不依赖备份成功，直接拒绝提供覆盖内容", async () => {
     const existing = PAGE("type: entity\ntitle: Foo", "old body")
     const incoming = PAGE("type: entity\ntitle: Foo", "new body")
     const backup = vi.fn().mockResolvedValue(undefined)
     const merger = vi.fn().mockRejectedValue(new Error("network error"))
-    await mergePageContent(incoming, existing, merger, {
+    await expect(mergePageContent(incoming, existing, merger, {
       ...baseOpts,
       backup,
-    })
-    expect(backup).toHaveBeenCalledWith(existing)
+    })).rejects.toThrow("network error")
+    expect(backup).not.toHaveBeenCalled()
   })
 
   it("does not call backup when LLM merge succeeds", async () => {
@@ -477,17 +492,19 @@ describe("mergePageContent — LLM failure fallback", () => {
     expect(backup).not.toHaveBeenCalled()
   })
 
-  it("backup failure is swallowed (best-effort, never blocks the write)", async () => {
+  it("单来源修订替换仍允许备份失败，不改变正常替换行为", async () => {
     const existing = PAGE("type: entity\ntitle: Foo", "old body")
     const incoming = PAGE("type: entity\ntitle: Foo", "new body content")
     const backup = vi.fn().mockRejectedValue(new Error("disk full"))
-    const merger = vi.fn().mockRejectedValue(new Error("network error"))
+    const merger = vi.fn()
 
     // Should still resolve — backup error must not propagate
     const out = await mergePageContent(incoming, existing, merger, {
       ...baseOpts,
       backup,
+      replaceExistingBody: true,
     })
     expect(out).toContain("new body content")
+    expect(merger).not.toHaveBeenCalled()
   })
 })

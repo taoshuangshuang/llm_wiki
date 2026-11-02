@@ -11,25 +11,31 @@ import chunkAnalysisTemplate from "./ingest-prompts/01-02-长文分块分析.md?
 import reviewTemplate from "./ingest-prompts/03-01-待审查事项分析.md?raw"
 import mergeTemplate from "./ingest-prompts/04-01-页面合并任务.md?raw"
 import classificationTemplate from "./ingest-prompts/05-01-业务模块分类.md?raw"
-import researchQuery from "./ingest-prompts/02-03-研究搜索词生成规则.md?raw"
 import reviewRequest from "./ingest-prompts/03-03-待审查事项分析请求.md?raw"
 import acceptance from "./ingest-prompts/06-01-最终验收规则.md?raw"
 import acceptanceRepair from "./ingest-prompts/06-02-验收修复补录规则.md?raw"
+import truncatedRepairTemplate from "./ingest-prompts/02-04-截断页面修复.md?raw"
+import pageMatchTemplate from "./ingest-prompts/04-03-页面主题核对.md?raw"
+import interactiveAnalysisTemplate from "./ingest-prompts/01-04-交互来源分析.md?raw"
+import interactiveGenerationTemplate from "./ingest-prompts/02-05-会话页面生成.md?raw"
+import backgroundReview from "./ingest-prompts/07-01-统一后台审阅.md?raw"
 
 export const DEFAULT_INGEST_PROMPTS = {
   analysis, generation, merge, classification, review,
   analysisTemplate, generationTemplate, chunkAnalysisTemplate, reviewTemplate,
-  mergeTemplate, classificationTemplate, researchQuery, reviewRequest, acceptance, acceptanceRepair,
+  mergeTemplate, classificationTemplate, reviewRequest, acceptance, acceptanceRepair,
+  truncatedRepairTemplate, pageMatchTemplate,
+  interactiveAnalysisTemplate, interactiveGenerationTemplate,
+  backgroundReview,
 }
 export type IngestPrompts = typeof DEFAULT_INGEST_PROMPTS
 /** 当前文件名与历史名称；始终优先使用当前名称，不混合配置。 */
-const PROMPT_FILES: Record<keyof IngestPrompts, { name: string; aliases: readonly string[] }> = {
+export const PROMPT_FILES: Record<keyof IngestPrompts, { name: string; aliases: readonly string[] }> = {
   analysisTemplate: { name: "01-01-来源文档分析.md", aliases: ["02-01-来源文档分析.md", "来源文档分析.md", "analysis-template.md"] },
   chunkAnalysisTemplate: { name: "01-02-长文分块分析.md", aliases: ["02-02-长文分块分析.md", "长文分块分析.md", "chunk-analysis-template.md"] },
   analysis: { name: "01-03-独立成页与名称复用规则.md", aliases: ["02-03-独立成页与名称复用规则.md", "独立成页与名称复用规则.md", "analysis.md"] },
   generationTemplate: { name: "02-01-Wiki页面生成.md", aliases: ["03-01-Wiki页面生成.md", "Wiki页面生成.md", "generation-template.md"] },
   generation: { name: "02-02-独立页面写作规则.md", aliases: ["03-02-独立页面写作规则.md", "独立页面写作规则.md", "generation.md"] },
-  researchQuery: { name: "02-03-研究搜索词生成规则.md", aliases: ["03-03-研究搜索词生成规则.md", "研究搜索词生成规则.md", "research-query.md"] },
   reviewTemplate: { name: "03-01-待审查事项分析.md", aliases: ["04-01-待审查事项分析.md", "待审查事项分析.md", "review-template.md"] },
   review: { name: "03-02-待审查事项筛选规则.md", aliases: ["04-02-待审查事项筛选规则.md", "待审查事项筛选规则.md", "review.md"] },
   reviewRequest: { name: "03-03-待审查事项分析请求.md", aliases: ["04-03-待审查事项分析请求.md", "待审查事项分析请求.md", "review-request.md"] },
@@ -39,10 +45,15 @@ const PROMPT_FILES: Record<keyof IngestPrompts, { name: string; aliases: readonl
   classification: { name: "05-02-业务模块选择规则.md", aliases: ["06-02-业务模块选择规则.md", "业务模块选择规则.md", "module-classification.md"] },
   acceptance: { name: "06-01-最终验收规则.md", aliases: [] },
   acceptanceRepair: { name: "06-02-验收修复补录规则.md", aliases: [] },
+  truncatedRepairTemplate: { name: "02-04-截断页面修复.md", aliases: [] },
+  pageMatchTemplate: { name: "04-03-页面主题核对.md", aliases: ["04-03-相似页面主题核对.md"] },
+  interactiveAnalysisTemplate: { name: "01-04-交互来源分析.md", aliases: [] },
+  interactiveGenerationTemplate: { name: "02-05-会话页面生成.md", aliases: [] },
+  backgroundReview: { name: "07-01-统一后台审阅.md", aliases: [] },
 }
 
 /** 依次查找当前名称、之前的序号名称、无序号中文名称和原英文名称。 */
-async function findProjectPromptFile(directory: string, key: keyof IngestPrompts): Promise<string | null> {
+export async function findProjectPromptFile(directory: string, key: keyof IngestPrompts): Promise<string | null> {
   const file = PROMPT_FILES[key]
   for (const candidate of [file.name, ...file.aliases]) {
     const path = `${directory}/${candidate}`
@@ -51,7 +62,7 @@ async function findProjectPromptFile(directory: string, key: keyof IngestPrompts
   return null
 }
 
-/** 单次替换中英文模板变量，支持按上下文是否存在保留整段；来源中的同名占位符不再展开。 */
+/** 单次替换中英文模板变量，支持开关和续传等可选段落；来源中的同名占位符不再展开。 */
 export function renderIngestPromptTemplate(
   template: string, values: Record<string, string>, required: readonly string[] = [],
 ): string {
@@ -59,6 +70,7 @@ export function renderIngestPromptTemplate(
     if (!template.includes(`{{${key}}}`)) throw new Error(`入库提示词模板缺少必要变量：{{${key}}}`)
   }
   const valueOf = (key: string): string => {
+    if (key === "研究搜索词生成规则") return "" // 已移除的历史变量只清空，不再读取或执行规则。
     if (!Object.prototype.hasOwnProperty.call(values, key)) throw new Error(`入库提示词模板包含未知变量：{{${key}}}`)
     return values[key]
   }

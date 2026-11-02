@@ -7,7 +7,7 @@ vi.mock("@/commands/fs", () => ({
   fileExists: vi.fn(),
 }))
 
-import { checkIngestCache, saveIngestCache } from "./ingest-cache"
+import { checkIngestCache, saveIngestCache, listIngestedSourceIdentities } from "./ingest-cache"
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 
 const mockReadFile = vi.mocked(readFile)
@@ -22,6 +22,27 @@ beforeEach(() => {
 })
 
 describe("ingest-cache — checkIngestCache", () => {
+  it.each([[], ["wiki/log.md"], ["wiki/index.md", "wiki/overview.md"], ["wiki/sources/foo.md"], ["/project/wiki/log.md"], ["/other/wiki/concepts/foo.md"]].map((paths) => ({ paths })))("不保存没有当前项目知识页的成功缓存：$paths", async ({ paths }) => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {} }))
+    await saveIngestCache("/project", "foo.pdf", "hello", paths)
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it("历史日志缓存不出现在已入库来源中，真实知识页支持项目绝对路径", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {
+      "log.md": { hash: "old", timestamp: 0, filesWritten: ["wiki/log.md"] },
+      "valid.md": { hash: "old", timestamp: 0, filesWritten: ["/project/wiki/concepts/valid.md", "wiki/log.md"] },
+    } }))
+    expect(await listIngestedSourceIdentities("/project")).toEqual(["valid.md"])
+  })
+
+  it("无知识页的结果会移除同一来源已有的错误成功缓存", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {
+      "foo.pdf": { hash: "old", timestamp: 0, filesWritten: ["wiki/log.md"] },
+    } }))
+    await saveIngestCache("/project", "foo.pdf", "hello", ["wiki/log.md"])
+    expect(JSON.parse(mockWriteFile.mock.calls[0][1])).toEqual({ entries: {} })
+  })
   it("returns null when no entry exists", async () => {
     mockReadFile.mockResolvedValue(JSON.stringify({ entries: {} }))
     const result = await checkIngestCache("/project", "foo.pdf", "content")
@@ -74,7 +95,7 @@ describe("ingest-cache — checkIngestCache", () => {
     mockWriteFile.mockImplementation(async (_p: string, c: string) => {
       persisted = c
     })
-    await saveIngestCache("/project", "foo.pdf", "hello", ["wiki/sources/foo.md"])
+    await saveIngestCache("/project", "foo.pdf", "hello", ["wiki/concepts/foo.md"])
 
     const result = await checkIngestCache("/project", "foo.pdf", "different content")
     expect(result).toBeNull()
@@ -86,7 +107,7 @@ describe("ingest-cache — checkIngestCache", () => {
     mockWriteFile.mockImplementation(async (_p: string, c: string) => {
       persisted = c
     })
-    await saveIngestCache("/project", "foo.pdf", "hello", ["wiki/sources/foo.md"])
+    await saveIngestCache("/project", "foo.pdf", "hello", ["wiki/concepts/foo.md"])
 
     mockFileExists.mockRejectedValue(new Error("stat failed"))
 

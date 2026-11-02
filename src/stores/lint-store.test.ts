@@ -151,3 +151,41 @@ describe("lint-store clearItems", () => {
     expect(() => useLintStore.getState().clearItems()).not.toThrow()
   })
 })
+
+
+describe("lint-store 增量结果快照", () => {
+  it("保留已有卡片身份和创建时间，避免后续批次更新导致选择失效", () => {
+    const first = { type: "orphan" as const, severity: "info" as const, page: "A.md", detail: "孤立页面" }
+    const second = { type: "broken-link" as const, severity: "warning" as const, page: "B.md", detail: "失效链接" }
+    useLintStore.getState().clearItems()
+    useLintStore.getState().replaceResults([first])
+    const original = useLintStore.getState().items[0]
+    useLintStore.getState().replaceResults([first, second])
+    expect(useLintStore.getState().items[0]).toEqual(original)
+    expect(useLintStore.getState().items[1].id).not.toBe(original.id)
+    useLintStore.getState().replaceResults([second])
+    expect(useLintStore.getState().items.map((item) => item.page)).toEqual(["B.md"])
+  })
+})
+
+/** 同一问题重复上报不能生成重复的 React key，也不能污染后续筛选。 */
+describe("lint-store 重复问题与历史卡片身份", () => {
+  it("重复快照只保留一张问题卡片，连续发布仍保持唯一 ID", () => {
+    const result = { type: "broken-link" as const, severity: "warning" as const, page: "A.md", detail: "Broken link", brokenTarget: "missing" }
+    useLintStore.getState().replaceResults([result, result])
+    useLintStore.getState().replaceResults([result, result])
+    expect(useLintStore.getState().items).toHaveLength(1)
+  })
+
+  it("恢复旧数据时合并同一问题，为不同问题的冲突 ID 分配新身份", () => {
+    const first: LintItem = { id: "lint-9999", type: "broken-link", severity: "warning", page: "A.md", detail: "缺失链接", brokenTarget: "missing", createdAt: 1 }
+    const second: LintItem = { ...first, type: "semantic", page: "B.md", detail: "内容冲突" }
+    useLintStore.getState().setItems([first, { ...first }, second])
+    const items = useLintStore.getState().items
+    expect(items).toHaveLength(2)
+    expect(items[0].id).toBe(first.id)
+    expect(new Set(items.map((item) => item.id)).size).toBe(2)
+    useLintStore.getState().replaceResults([first, second])
+    expect(new Set(useLintStore.getState().items.map((item) => item.id)).size).toBe(2)
+  })
+})

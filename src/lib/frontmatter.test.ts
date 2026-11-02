@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest"
-import { parseFrontmatter } from "./frontmatter"
+import { extractPageTitle, parseFrontmatter } from "./frontmatter"
+
+describe("候选召回页面标题", () => {
+  it.each([
+    ["---\ntitle: 元数据标签机制\n---\n# 正文标题\n泛相关正文", "元数据标签机制"],
+    ["# Redis 缓存清理\n\n正文中的其他主题", "Redis 缓存清理"],
+    ["没有标题的正文", undefined],
+  ])("仅使用元信息或一级标题，不将正文作为标题：%s", (content, title) => {
+    expect(extractPageTitle(content)).toBe(title)
+  })
+})
 
 describe("parseFrontmatter", () => {
   it("returns null + full body when content has no frontmatter", () => {

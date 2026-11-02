@@ -233,12 +233,40 @@ pub fn set_important_file(project_path: String, file_path: String, important: bo
 
 #[tauri::command]
 pub fn review_file_change(project_path: String, proposal_id: String, approve: bool) -> Result<(), String> {
+    let _commit = crate::mutation::lock()?;
     let _guard = lock_mutations()?;
     let root = resolved_path(Path::new(&project_path))?;
     let mut state = load_state(&root)?;
     let item = state.proposals.iter_mut().find(|item| item.id == proposal_id)
         .ok_or("File change proposal not found")?;
     if item.status != "pending" { return Err("File change proposal was already reviewed".to_string()); }
+    if approve && (item.source == "wiki.delete_page" || item.source.starts_with("wiki.move_page:")) && item.proposed.is_none() {
+        // 页面删除必须连同引用及索引一起完成，不能审批时只删文件留下断链。
+        let (path, original) = (item.path.clone(), item.original.clone());
+        let move_to = item.source.strip_prefix("wiki.move_page:").map(str::to_string);
+        drop(_guard);
+        drop(_commit);
+        let warnings = if let Some(to) = &move_to {
+            tauri::async_runtime::block_on(crate::agent::wiki_move::move_approved_wiki_page(
+                root.to_string_lossy().into_owned(), path.clone(), to.clone(), original,
+            ))?.warnings
+        } else {
+            tauri::async_runtime::block_on(crate::agent::wiki_delete::delete_approved_wiki_page(
+                root.to_string_lossy().into_owned(), path.clone(), original,
+            ))?.warnings
+        };
+        let _commit = crate::mutation::lock()?;
+        let _guard = lock_mutations()?;
+        let mut state = load_state(&root)?;
+        let item = state.proposals.iter_mut().find(|item| item.id == proposal_id)
+            .ok_or("File change proposal not found")?;
+        item.status = "approved".into();
+        item.reviewed_at = Some(chrono::Utc::now().timestamp_millis());
+        state.important_paths.retain(|marked| marked != &path);
+        save_state(&root, &state)?;
+        return if warnings.is_empty() { Ok(()) }
+            else { Err(format!("页面已变更，仍有清理警告：{}", warnings.join("；"))) };
+    }
     if approve {
         let file = resolved_path(&root.join(&item.path))?;
         if relative_path(&root, &file)? != item.path {
@@ -264,9 +292,25 @@ pub fn review_file_change(project_path: String, proposal_id: String, approve: bo
     save_state(&root, &state)
 }
 
+/// 页面身份移动后继承重要标记；只由持有全局提交锁的生命周期调用。
+pub(crate) fn migrate_important_path(project_path: &str, from: &str, to: &str) -> Result<(), String> {
+    let root = Path::new(project_path);
+    if !root.join(".llm-wiki").exists() { return Ok(()); }
+    let _guard = lock_mutations()?;
+    let mut state = load_state(root)?;
+    if state.important_paths.iter().any(|path| path == from) {
+        state.important_paths.retain(|path| path != from);
+        if !state.important_paths.iter().any(|path| path == to) { state.important_paths.push(to.to_string()); }
+        state.important_paths.sort();
+        save_state(root, &state)?;
+    }
+    Ok(())
+}
+
 /// 原文编辑器的人工保存入口，与模型的通用写入入口区分。
 #[tauri::command]
 pub fn save_human_file(path: String, contents: String) -> Result<(), String> {
+    let _commit = crate::mutation::lock()?;
     let _guard = lock_mutations()?;
     let file = resolved_path(Path::new(&path))?;
     if let Some(root) = project_root(&file) { relative_path(&root, &file)?; }
@@ -276,4 +320,69 @@ pub fn save_human_file(path: String, contents: String) -> Result<(), String> {
     super::file_history::record_file_version(&file, "human", "human_editor");
     super::file_sync::mark_app_write_path(&file);
     Ok(())
+}
+
+/// 知识流程编辑器只写项目配置，并在同一提交锁内核对读取版本。
+#[tauri::command]
+pub fn save_workflow_file(project_path: String, relative_path: String, expected: Option<String>, contents: String) -> Result<(), String> {
+    let parts: Vec<&str> = relative_path.split('/').collect();
+    let valid = matches!(relative_path.as_str(), "purpose.md" | "schema.md" | "page-rules.md" | "business-modules.md")
+        || (parts.len() == 2 && parts[0] == "prompts" && parts[1].ends_with(".md")
+            && !parts[1].starts_with('.') && !parts[1].contains(['\\', ':'])
+            && !parts[1].chars().any(char::is_control));
+    if !valid { return Err("知识流程配置路径无效".into()); }
+    let _commit = crate::mutation::lock()?;
+    let _guard = lock_mutations()?;
+    let root = fs::canonicalize(&project_path).map_err(|error| error.to_string())?;
+    let file = resolved_path(&root.join(&relative_path))?;
+    if !file.starts_with(&root) { return Err("配置文件超出当前项目".into()); }
+    let current = match fs::read_to_string(&file) {
+        Ok(value) => Some(value),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    if current != expected { return Err("配置文件已被其他操作修改，请重新读取并核对后保存".into()); }
+    if let Some(parent) = file.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    super::file_history::record_file_version(&file, "baseline", "before.workflow_editor");
+    super::file_sync::mark_app_write_path(&file);
+    atomic_write(&file, contents.as_bytes())?;
+    super::file_history::record_file_version(&file, "human", "workflow_editor");
+    super::file_sync::mark_app_write_path(&file);
+    Ok(())
+}
+
+#[cfg(test)]
+mod workflow_file_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_save_checks_version_and_creates_only_allowed_project_files() {
+        let root = std::env::temp_dir().join(format!("workflow-files-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let project = root.to_string_lossy().to_string();
+        save_workflow_file(project.clone(), "business-modules.md".into(), None, "原始字典".into()).unwrap();
+        assert!(save_workflow_file(project.clone(), "business-modules.md".into(), None, "过期覆盖".into()).is_err());
+        assert_eq!(fs::read_to_string(root.join("business-modules.md")).unwrap(), "原始字典");
+        save_workflow_file(project.clone(), "business-modules.md".into(), Some("原始字典".into()), "新字典".into()).unwrap();
+        save_workflow_file(project.clone(), "prompts/规则.md".into(), None, "提示词".into()).unwrap();
+        assert_eq!(fs::read_to_string(root.join("prompts/规则.md")).unwrap(), "提示词");
+        for invalid in ["../outside.md", "prompts/../outside.md", "wiki/page.md", ".llm-wiki/config.md", "prompts/.hidden.md", "prompts/nested/rule.md"] {
+            assert!(save_workflow_file(project.clone(), invalid.into(), None, "无效写入".into()).is_err(), "{invalid}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn workflow_save_cannot_follow_a_prompt_directory_outside_project() {
+        let root = std::env::temp_dir().join(format!("workflow-links-{}", Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("workflow-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("prompts")).unwrap();
+        assert!(save_workflow_file(root.to_string_lossy().into_owned(), "prompts/rule.md".into(), None, "越界".into()).is_err());
+        assert!(!outside.join("rule.md").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
 }

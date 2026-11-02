@@ -19,6 +19,16 @@ describe("source watch all-projects persistence", () => {
     save.mockClear()
   })
 
+  it("问答历史长度独立持久化，重启读取并约束手工修改的值", async () => {
+    const { saveHistoryMessageLimit, loadHistoryMessageLimit } = await import("./project-store")
+    expect(await loadHistoryMessageLimit()).toBe(10)
+    await saveHistoryMessageLimit(20)
+    expect(await loadHistoryMessageLimit()).toBe(20)
+    expect(save).toHaveBeenCalledTimes(1)
+    storage.set("historyMessageLimit", 1000)
+    expect(await loadHistoryMessageLimit()).toBe(100)
+  })
+
   it("defaults off and round-trips the global option", async () => {
     const {
       loadSourceWatchAllProjects,
@@ -34,14 +44,15 @@ describe("source watch all-projects persistence", () => {
     expect(await loadSourceWatchAllProjects()).toBe(false)
   })
 
-  it("来源摘要默认关闭，显式开启仅影响对应项目并能持久化", async () => {
+  it("读取旧配置时丢弃摘要开关，其他项目设置正常持久化", async () => {
     const { loadSourceWatchConfig, saveSourceWatchConfig } = await import("./project-store")
     const config = await loadSourceWatchConfig("project-a")
-    expect(config.generateSourceSummary).toBe(false)
-    await saveSourceWatchConfig({ ...config, generateSourceSummary: true }, "project-a")
-    expect((await loadSourceWatchConfig("project-a")).generateSourceSummary).toBe(true)
-    expect((await loadSourceWatchConfig("project-b")).generateSourceSummary).toBe(false)
-    await saveSourceWatchConfig({ ...config, generateSourceSummary: false }, "project-a")
-    expect((await loadSourceWatchConfig("project-a")).generateSourceSummary).toBe(false)
+    storage.set("sourceWatchConfig", { "project-a": { ...config, generateSourceSummary: true } })
+    const restored = await loadSourceWatchConfig("project-a")
+    expect(restored).not.toHaveProperty("generateSourceSummary")
+    await saveSourceWatchConfig({ ...restored, persistExtractedMarkdown: true }, "project-a")
+    expect((await loadSourceWatchConfig("project-a")).persistExtractedMarkdown).toBe(true)
+    expect((await loadSourceWatchConfig("project-b")).persistExtractedMarkdown).toBe(false)
+    expect(storage.get("sourceWatchConfig")).toEqual({ "project-a": { ...restored, persistExtractedMarkdown: true } })
   })
 })

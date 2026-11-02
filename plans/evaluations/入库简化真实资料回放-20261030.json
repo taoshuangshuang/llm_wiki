@@ -1,0 +1,149 @@
+{
+  "projectPath": "/private/tmp/llm-wiki-simplify-validation/replay",
+  "limitation": "真实桌面首轮已执行。锁屏后本回放直接执行同一生产流程并通过 Rust 传输接缝调用原生检索与提交，不替代修复版桌面 UI 的再次验收。",
+  "results": [
+    {
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202512.md",
+      "runId": "3b840e65-41f9-44cb-a2f4-4dd6632339b1",
+      "elapsedMs": 107295,
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "not-applicable",
+          "reason": "当前页已由后续操作修改；原来源转换的校验保留原版本报告"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "index": 1,
+          "status": "complete",
+          "retrieval": "completed",
+          "elapsedMs": 13538,
+          "warnings": []
+        },
+        {
+          "index": 2,
+          "status": "complete",
+          "retrieval": "completed",
+          "elapsedMs": 8488,
+          "warnings": []
+        }
+      ],
+      "repairs": [
+        {
+          "id": "3815ab23-f6e8-4c60-8ef7-2eb8a4e629a1",
+          "stage": "knowledge",
+          "status": "failed",
+          "reason": "Error: 生成修复前页面已变化：wiki/topics/R5到R6升级与去Mongo常见问题.md"
+        }
+      ],
+      "oldAttemptsPreserved": true,
+      "manualPreserved": true
+    },
+    {
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202601.md",
+      "runId": "0d59bf90-bd22-4cef-8cd8-f61612fcbc21",
+      "elapsedMs": 217,
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "index": 1,
+          "status": "complete",
+          "retrieval": "completed",
+          "elapsedMs": 12216,
+          "warnings": []
+        },
+        {
+          "index": 2,
+          "status": "complete",
+          "retrieval": "completed",
+          "elapsedMs": 8432,
+          "warnings": []
+        }
+      ],
+      "repairs": [
+        {
+          "id": "2e32ed85-b9f3-4958-9eae-9e45908ccf86",
+          "stage": "merge",
+          "status": "verified",
+          "reason": "一轮重新合并通过结果校验且实际提交完成，内容保真由后续内容检查核对"
+        },
+        {
+          "id": "8954a2f3-f957-486a-b6b3-a5bd131d45de",
+          "stage": "knowledge",
+          "status": "verified",
+          "reason": "两处重复均已按建议处理：(1) KKZC-73200 与 LYJM-168064 完整陈述集中保留于「imeta升级与二开适配限制」（现象、原因、处理与工单号齐全，独有的 QuerySchema 穿透、导出枚举穿透、审批接口字段重复及 arthas/SQL 证据均保留）；「R5到R6升级与去Mongo常见问题」精简为两条现象摘要加指引（'集中记录于 [[imeta升级与二开适配限制]]，本页不再重复维护'），两条工单号与报错信息保留，其余独有条目（基类识别、HXRL-161334、LYJM-168254、ISV 二方包等）未受影响。(2) LYJM-167579 拟议规则完整陈述保留于约束页（含'供应链/财务级联取消分配规则（待确认）'章节标题，与两处指引引用的章节名一致）；case 页保留独有现象/原因并改为指引；汇总页改为索引条目，保留工单号与'待确认，不作为已定约束使用'的边界声明。三处结论一致，无事实分歧，未引入无依据事实或错误引用。"
+        },
+        {
+          "id": "597badb0-2004-4269-852a-43853385a579",
+          "stage": "knowledge",
+          "status": "failed",
+          "reason": "SyntaxError: Unexpected token '`', \"```json\n{\"\"... is not valid JSON"
+        }
+      ],
+      "oldAttemptsPreserved": true,
+      "manualPreserved": true
+    },
+    {
+      "sourcePath": "raw/sources/iuapdocs/13-问题分析/支持问题/202602.md",
+      "runId": "f04a2541-3b5a-4da7-8caa-2910cd7a7105",
+      "elapsedMs": 37299,
+      "reviewStatus": "complete",
+      "steps": {
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        },
+        "supplement": {
+          "status": "complete"
+        }
+      },
+      "batches": [
+        {
+          "index": 1,
+          "status": "complete",
+          "retrieval": "completed",
+          "elapsedMs": 7189,
+          "warnings": []
+        }
+      ],
+      "oldAttemptsPreserved": true,
+      "manualPreserved": true
+    }
+  ],
+  "recovery": {
+    "runCount": 3,
+    "pageCount": 538,
+    "pagesUnchanged": true,
+    "repairLedgerUnchanged": true,
+    "manualStateUnchanged": true
+  }
+}

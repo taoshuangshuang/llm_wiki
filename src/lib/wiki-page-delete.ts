@@ -19,22 +19,10 @@
  * to apply their own fault-tolerance policy (e.g. continue with the
  * next file in a batch, or surface to the user via toast).
  */
-import { deleteFile, listDirectory, readFile, writeFile } from "@/commands/fs"
+import { invoke } from "@tauri-apps/api/core"
+import { deleteFile } from "@/commands/fs"
 import { getFileStem, normalizePath } from "@/lib/path-utils"
 import { removePageEmbedding, wikiPageIdFromPath } from "@/lib/embedding"
-import {
-  buildDeletedKeys,
-  cleanIndexListing,
-  extractFrontmatterTitle,
-  normalizeWikiRefKey,
-  stripDeletedWikilinks,
-  type DeletedPageInfo,
-} from "@/lib/wiki-cleanup"
-import {
-  parseFrontmatterArray,
-  writeFrontmatterArray,
-} from "@/lib/sources-merge"
-import type { FileNode } from "@/types/wiki"
 import { isSourceMediaReferenced } from "@/lib/source-media"
 
 /**
@@ -109,26 +97,13 @@ export async function cascadeDeleteWikiPage(
   }
 }
 
-function flattenMd(nodes: readonly FileNode[]): FileNode[] {
-  const out: FileNode[] = []
-  function walk(ns: readonly FileNode[]): void {
-    for (const n of ns) {
-      if (n.is_dir) {
-        if (n.children) walk(n.children)
-        continue
-      }
-      if (n.name.endsWith(".md")) out.push(n)
-    }
-  }
-  walk(nodes)
-  return out
-}
-
 export interface CascadeDeleteResult {
   /** Wiki-page paths that were actually removed from disk. */
   deletedPaths: string[]
   /** How many surviving wiki files we rewrote to drop stale refs. */
   rewrittenFiles: number
+  /** 文件已变更，但索引或媒体仍有待清理时必须展示。 */
+  warnings: string[]
 }
 
 /**
@@ -165,84 +140,21 @@ export async function cascadeDeleteWikiPagesWithRefs(
   projectPath: string,
   pagePaths: readonly string[],
 ): Promise<CascadeDeleteResult> {
-  const pp = normalizePath(projectPath)
-  const result: CascadeDeleteResult = {
-    deletedPaths: [],
-    rewrittenFiles: 0,
+  // 完整清理现已移到 Rust；界面、Agent 与 HTTP/MCP 使用同一实现。
+  const pp = normalizePath(projectPath).replace(/\/+$/, "")
+  const paths = pagePaths.map((path) => {
+    const normalized = normalizePath(path)
+    if (normalized.startsWith(`${pp}/`)) return normalized.slice(pp.length + 1)
+    if (normalized.startsWith("wiki/")) return normalized
+    throw new Error(`Wiki path must stay inside the project: ${path}`)
+  })
+  const result = await invoke<{
+    deletedPaths: string[]; rewrittenFiles: number; warnings: string[]; verified: boolean
+  }>("delete_wiki_pages", { projectPath: pp, paths })
+  if (!result.verified) throw new Error("Wiki deletion was not verified")
+  return {
+    deletedPaths: result.deletedPaths.map((path) => `${pp}/${path}`),
+    rewrittenFiles: result.rewrittenFiles,
+    warnings: result.warnings,
   }
-
-  // 1. Read each target's title so the cleanup keyset includes both
-  //    slug-form and title-form. Capture before delete.
-  const infos: DeletedPageInfo[] = []
-  for (const pagePath of pagePaths) {
-    let title = ""
-    try {
-      const content = await readFile(pagePath)
-      title = extractFrontmatterTitle(content)
-    } catch {
-      // file may have been deleted between selection + action; the
-      // slug-form key alone will still work.
-    }
-    const slug = getFileStem(pagePath)
-    if (slug.length > 0) infos.push({ slug, title })
-  }
-
-  // 2. Delete the target files themselves.
-  for (const pagePath of pagePaths) {
-    try {
-      await cascadeDeleteWikiPage(pp, pagePath)
-      result.deletedPaths.push(pagePath)
-    } catch (err) {
-      console.warn(`[wiki-delete] failed to delete ${pagePath}:`, err)
-    }
-  }
-
-  if (infos.length === 0) return result
-
-  // 3. Sweep surviving wiki/*.md.
-  const deletedKeys = buildDeletedKeys(infos)
-  const wikiTree = await listDirectory(`${pp}/wiki`)
-  const allMd = flattenMd(wikiTree)
-  const indexAbs = `${pp}/wiki/index.md`
-
-  for (const file of allMd) {
-    if (result.deletedPaths.includes(file.path)) continue // already gone
-    let content: string
-    try {
-      content = await readFile(file.path)
-    } catch {
-      continue
-    }
-
-    let updated = content
-    if (file.path === indexAbs || file.name === "index.md") {
-      updated = cleanIndexListing(updated, deletedKeys)
-    }
-    updated = stripDeletedWikilinks(updated, deletedKeys)
-
-    // `related:` frontmatter — drop entries that point at a deleted
-    // page. parseFrontmatterArray returns the parsed string list;
-    // writeFrontmatterArray rewrites only that field, preserving
-    // every other line.
-    const related = parseFrontmatterArray(updated, "related")
-    if (related.length > 0) {
-      const filtered = related.filter(
-        (s) => !deletedKeys.has(normalizeWikiRefKey(s)),
-      )
-      if (filtered.length !== related.length) {
-        updated = writeFrontmatterArray(updated, "related", filtered)
-      }
-    }
-
-    if (updated !== content) {
-      try {
-        await writeFile(file.path, updated)
-        result.rewrittenFiles++
-      } catch (err) {
-        console.warn(`[wiki-delete] failed to rewrite ${file.path}:`, err)
-      }
-    }
-  }
-
-  return result
 }

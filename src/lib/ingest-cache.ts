@@ -1,5 +1,6 @@
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
+import { isIngestKnowledgePath } from "./ingest-knowledge-path"
 
 /**
  * SHA256-based ingest cache.
@@ -15,6 +16,15 @@ interface CacheEntry {
 
 interface CacheData {
   entries: Record<string, CacheEntry> // keyed by source filename
+}
+
+/** 兼容历史绝对路径缓存，但只承认当前项目内的知识页。 */
+function hasKnowledgePages(projectPath: string, files: string[]): boolean {
+  const prefix = `${normalizePath(projectPath).replace(/\/+$/, "")}/`
+  return files.some((file) => {
+    const path = normalizePath(file)
+    return isIngestKnowledgePath(isAbsolutePath(path) && path.startsWith(prefix) ? path.slice(prefix.length) : path)
+  })
 }
 
 async function sha256(content: string): Promise<string> {
@@ -41,7 +51,7 @@ async function loadCache(projectPath: string): Promise<CacheData> {
 /** Source identities with a recorded successful ingest result. */
 export async function listIngestedSourceIdentities(projectPath: string): Promise<string[]> {
   const cache = await loadCache(projectPath)
-  return Object.keys(cache.entries)
+  return Object.keys(cache.entries).filter((source) => hasKnowledgePages(projectPath, cache.entries[source].filesWritten))
 }
 
 async function saveCache(projectPath: string, cache: CacheData): Promise<void> {
@@ -72,7 +82,7 @@ export async function checkIngestCache(
 ): Promise<string[] | null> {
   const cache = await loadCache(projectPath)
   const entry = cache.entries[sourceFileName]
-  if (!entry) return null
+  if (!entry || !hasKnowledgePages(projectPath, entry.filesWritten)) return null
 
   const currentHash = await sha256(contract ? JSON.stringify([sourceContent, contract]) : sourceContent)
   if (entry.hash !== currentHash) return null
@@ -110,6 +120,14 @@ export async function saveIngestCache(
   contract: string = "",
 ): Promise<void> {
   const cache = await loadCache(projectPath)
+  if (!hasKnowledgePages(projectPath, filesWritten)) {
+    // 失败重跑也不能留下旧的日志成功缓存。
+    if (cache.entries[sourceFileName]) {
+      delete cache.entries[sourceFileName]
+      await saveCache(projectPath, cache)
+    }
+    return
+  }
   const hash = await sha256(contract ? JSON.stringify([sourceContent, contract]) : sourceContent)
   const newEntries = { ...cache.entries }
   newEntries[sourceFileName] = {

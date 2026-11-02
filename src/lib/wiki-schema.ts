@@ -1,4 +1,4 @@
-import { readFile } from "@/commands/fs"
+import { loadProjectSchema } from "@/lib/project-schema"
 import { parseFrontmatter } from "@/lib/frontmatter"
 
 export interface WikiSchemaRouting {
@@ -17,12 +17,7 @@ export interface WikiSchemaRouteCorrection {
 export async function loadProjectWikiSchemaRouting(
   projectPath: string,
 ): Promise<WikiSchemaRouting | null> {
-  let raw = ""
-  try {
-    raw = await readFile(`${projectPath.replace(/\/+$/, "")}/schema.md`)
-  } catch {
-    return null
-  }
+  const raw = await loadProjectSchema(projectPath, "analysis")
   if (!raw.trim()) return null
 
   const routing = parseWikiSchemaRouting(raw)

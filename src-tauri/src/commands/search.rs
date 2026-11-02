@@ -8,9 +8,9 @@ use walkdir::WalkDir;
 
 use crate::commands::vectorstore;
 use crate::panic_guard::run_guarded_async;
+pub mod evidence;
 
 const DEFAULT_RESULTS: usize = 20;
-const MAX_RESULTS: usize = 50;
 const RRF_K: f64 = 60.0;
 const FILENAME_EXACT_BONUS: f64 = 200.0;
 const PHRASE_IN_TITLE_BONUS: f64 = 50.0;
@@ -21,9 +21,6 @@ const CONTENT_TOKEN_WEIGHT: f64 = 1.0;
 const SNIPPET_CONTEXT: usize = 80;
 const SEARCH_EMBEDDING_TIMEOUT_SECS: u64 = 8;
 const MAX_SEARCH_FILES: usize = 10_000;
-const MIN_GRAPH_RESULT_RATIO: f64 = 0.15;
-const MAX_GRAPH_RESULT_RATIO: f64 = 0.30;
-const MAX_GRAPH_SEEDS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +44,8 @@ pub struct ProjectSearchResult {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graph_related_to: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_context: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +56,8 @@ pub struct ProjectSearchResponse {
     pub token_hits: usize,
     pub vector_hits: usize,
     pub graph_hits: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,16 +115,7 @@ pub async fn search_project(
     embedding_config: Option<SearchEmbeddingConfig>,
 ) -> Result<ProjectSearchResponse, String> {
     run_guarded_async("search_project", async move {
-        let query_embedding =
-            resolve_query_embedding(&query, query_embedding, embedding_config).await?;
-        search_project_inner(
-            project_path,
-            query,
-            top_k.unwrap_or(DEFAULT_RESULTS),
-            include_content.unwrap_or(false),
-            query_embedding,
-        )
-        .await
+        search_with_evidence(project_path, query, top_k.unwrap_or(DEFAULT_RESULTS), include_content.unwrap_or(false), query_embedding, embedding_config).await
     })
     .await
 }
@@ -291,29 +283,6 @@ fn resolve_reader_wikilink<'a>(
     })
 }
 
-pub async fn resolve_query_embedding(
-    query: &str,
-    explicit_embedding: Option<Vec<f32>>,
-    embedding_config: Option<SearchEmbeddingConfig>,
-) -> Result<Option<Vec<f32>>, String> {
-    if let Some(embedding) = explicit_embedding {
-        return validate_query_embedding(embedding).map(Some);
-    }
-    let Some(cfg) = embedding_config else {
-        return Ok(None);
-    };
-    if !cfg.enabled || cfg.endpoint.trim().is_empty() || cfg.model.trim().is_empty() {
-        return Ok(None);
-    }
-    match fetch_embedding_with_retry(query, &cfg, 0).await {
-        Ok(embedding) => validate_query_embedding(embedding).map(Some),
-        Err(err) => {
-            eprintln!("[Search] embedding disabled for this request: {err}");
-            Ok(None)
-        }
-    }
-}
-
 fn validate_query_embedding(embedding: Vec<f32>) -> Result<Vec<f32>, String> {
     if embedding.is_empty() {
         return Err("queryEmbedding must not be empty".to_string());
@@ -331,377 +300,47 @@ pub async fn search_project_inner(
     include_content: bool,
     query_embedding: Option<Vec<f32>>,
 ) -> Result<ProjectSearchResponse, String> {
-    if query.trim().is_empty() {
-        return Err("query is required".to_string());
-    }
-    let limit = top_k.clamp(1, MAX_RESULTS);
-    let tokens = tokenize_query(&query);
-    let effective_tokens = if tokens.is_empty() {
-        vec![query.trim().to_lowercase()]
-    } else {
-        tokens
-    };
-    let query_phrase = trim_query_punctuation(&query.to_lowercase());
-    let mut results = Vec::new();
-    let mut page_paths_by_vector_id = BTreeMap::new();
-    let mut legacy_stem_candidates = BTreeMap::<String, Vec<String>>::new();
-    let mut graph_pages = BTreeMap::new();
+    search_with_evidence(project_path, query, top_k, include_content, query_embedding, None).await
+}
 
-    let wiki_root = Path::new(&project_path).join("wiki");
-    if wiki_root.exists() {
-        let mut searched_files = 0usize;
-        for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file()
-                || !entry
-                    .path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-            {
-                continue;
-            }
-            searched_files += 1;
-            if searched_files > MAX_SEARCH_FILES {
-                eprintln!(
-                    "[Search] stopped scanning wiki after {MAX_SEARCH_FILES} markdown files in {project_path}"
-                );
-                break;
-            }
-            let content = match fs::read_to_string(entry.path()) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-            let relative_path = relative_to_project(&project_path, entry.path());
-            if let Some(vector_id) = vector_page_id(&relative_path) {
-                page_paths_by_vector_id.insert(vector_id, relative_path.clone());
-            }
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                legacy_stem_candidates
-                    .entry(stem.to_string())
-                    .or_default()
-                    .push(relative_path.clone());
-            }
-            let title = extract_title(
-                &content,
-                entry
-                    .path()
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default(),
-            );
-            let hit = score_file(
-                &project_path,
-                entry.path(),
-                &content,
-                &effective_tokens,
-                &query_phrase,
-                &query,
-                include_content,
-            );
-            graph_pages.insert(
-                normalize_path(&relative_path),
-                GraphPage {
-                    path: relative_path,
-                    title,
-                    links: extract_graph_links(&content),
-                    content,
-                },
-            );
-            if let Some(hit) = hit {
-                results.push(hit);
-            }
-        }
-    }
-    let legacy_page_paths = legacy_stem_candidates
-        .into_iter()
-        .filter_map(|(stem, paths)| (paths.len() == 1).then(|| (stem, paths[0].clone())))
-        .collect::<BTreeMap<_, _>>();
-
-    let mut token_sorted = (0..results.len()).collect::<Vec<_>>();
-    token_sorted.sort_by(|a, b| {
-        results[*b]
-            .score
-            .partial_cmp(&results[*a].score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| results[*a].path.cmp(&results[*b].path))
-    });
-    let mut token_rank = BTreeMap::new();
-    for (idx, result_idx) in token_sorted.iter().enumerate() {
-        let result = &results[*result_idx];
-        token_rank.insert(normalize_path(&result.path), idx + 1);
-    }
-
-    let mut vector_rank: BTreeMap<String, usize> = BTreeMap::new();
-    let mut vector_score: BTreeMap<String, f32> = BTreeMap::new();
+/// 旧搜索接口仅适配返回结构；召回、融合和正文展开全部由统一核心执行。
+pub async fn search_with_evidence(
+    project_path: String, query: String, top_k: usize, include_content: bool,
+    query_embedding: Option<Vec<f32>>, embedding_config: Option<SearchEmbeddingConfig>,
+) -> Result<ProjectSearchResponse, String> {
+    let query_terms = tokenize_query(&query);
+    let config = embedding_config.or_else(|| query_embedding.as_ref().map(|_| SearchEmbeddingConfig {
+        enabled: true, endpoint: String::new(), api_key: String::new(), model: String::new(),
+        output_dimensionality: None, extra_headers: None, max_chunk_chars: None, overlap_chunk_chars: None,
+    }));
+    let result = evidence::retrieve(evidence::Request {
+        project_path, scene: "search".into(), targets: vec![evidence::Target { id: "query".into(), text: query, title: None, path: None }],
+        scope: None, channels: None, budget: None, checkpoint: None,
+    }, config, query_embedding).await?;
+    let mut results: Vec<ProjectSearchResult> = Vec::new();
+    let mut token_hits = 0;
     let mut vector_hits = 0;
-    if let Some(embedding) = query_embedding {
-        if !embedding.is_empty() {
-            match search_by_embedding(&project_path, embedding, limit.max(10)).await {
-                Ok(vector_results) => {
-                    vector_hits = vector_results.len();
-                    for (idx, vr) in vector_results.iter().enumerate() {
-                        vector_rank.insert(vr.id.clone(), idx + 1);
-                        vector_score.insert(vr.id.clone(), vr.score);
-                    }
-                    materialize_vector_only_results(
-                        &vector_results,
-                        &page_paths_by_vector_id,
-                        &legacy_page_paths,
-                        &project_path,
-                        &mut results,
-                        include_content,
-                    );
-                }
-                Err(err) => {
-                    eprintln!(
-                        "[Search] vector search failed; falling back to keyword results: {err}"
-                    );
-                }
-            }
-        }
-    }
-
-    if vector_hits > 0 {
-        apply_rrf_scores(
-            &mut results,
-            &token_rank,
-            &vector_rank,
-            &vector_score,
-            &legacy_page_paths,
-        );
-    }
-
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    let graph_hits = blend_graph_results(
-        &mut results,
-        &graph_pages,
-        limit,
-        vector_hits,
-        include_content,
-    );
-
-    Ok(ProjectSearchResponse {
-        mode: search_mode(token_rank.is_empty(), vector_hits, graph_hits).to_string(),
-        token_hits: token_rank.len(),
-        vector_hits,
-        graph_hits,
-        results,
-    })
-}
-
-fn apply_rrf_scores(
-    results: &mut [ProjectSearchResult],
-    token_rank: &BTreeMap<String, usize>,
-    vector_rank: &BTreeMap<String, usize>,
-    vector_score: &BTreeMap<String, f32>,
-    legacy_page_paths: &BTreeMap<String, String>,
-) {
-    for result in results {
-        let token = token_rank.get(&normalize_path(&result.path)).copied();
-        let vector_id = vector_page_id(&result.path).unwrap_or_else(|| file_stem(&result.path));
-        let legacy_stem = file_stem(&result.path);
-        let legacy_matches_page = legacy_page_paths
-            .get(&legacy_stem)
-            .is_some_and(|path| normalize_path(path) == normalize_path(&result.path));
-        let vector = vector_rank
-            .get(&vector_id)
-            .or_else(|| {
-                legacy_matches_page
-                    .then(|| vector_rank.get(&legacy_stem))
-                    .flatten()
-            })
-            .copied();
-        let mut rrf = 0.0;
-        if let Some(rank) = token {
-            rrf += 1.0 / (RRF_K + rank as f64);
-        }
-        if let Some(rank) = vector {
-            rrf += 1.0 / (RRF_K + rank as f64);
-        }
-        if let Some(score) = vector_score
-            .get(&vector_id)
-            .or_else(|| {
-                legacy_matches_page
-                    .then(|| vector_score.get(&legacy_stem))
-                    .flatten()
-            })
-            .copied()
-        {
-            result.vector_score = Some(score);
-        }
-        result.score = rrf;
-    }
-}
-
-/// Reserve 15-30% of the final window for one-hop graph expansion. A full
-/// vector window leaves the minimum graph share; sparse vector retrieval moves
-/// progressively toward the maximum. Missing graph candidates automatically
-/// return their slots to keyword/vector results.
-fn graph_result_quota(limit: usize, vector_hits: usize) -> usize {
-    if limit < 2 {
-        return 0;
-    }
-    let vector_coverage = vector_hits.min(limit) as f64 / limit as f64;
-    let ratio = MAX_GRAPH_RESULT_RATIO
-        - (MAX_GRAPH_RESULT_RATIO - MIN_GRAPH_RESULT_RATIO) * vector_coverage;
-    ((limit as f64 * ratio).ceil() as usize).clamp(1, limit - 1)
-}
-
-fn blend_graph_results(
-    ranked_results: &mut Vec<ProjectSearchResult>,
-    pages: &BTreeMap<String, GraphPage>,
-    limit: usize,
-    vector_hits: usize,
-    include_content: bool,
-) -> usize {
-    if ranked_results.is_empty() || pages.is_empty() {
-        ranked_results.truncate(limit);
-        return 0;
-    }
-
-    let mut aliases = BTreeMap::<String, String>::new();
-    for (normalized_path, page) in pages {
-        let wiki_relative = page.path.strip_prefix("wiki/").unwrap_or(&page.path);
-        let stem = file_stem(&page.path);
-        for alias in [
-            page.path.as_str(),
-            wiki_relative,
-            stem.as_str(),
-            page.title.as_str(),
-        ] {
-            aliases.insert(normalize_graph_alias(alias), normalized_path.clone());
-        }
-    }
-
-    let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
-    for (source, page) in pages {
-        for link in &page.links {
-            let Some(target) = aliases.get(&normalize_graph_alias(link)) else {
-                continue;
-            };
-            if source == target {
-                continue;
-            }
-            adjacency
-                .entry(source.clone())
-                .or_default()
-                .insert(target.clone());
-            adjacency
-                .entry(target.clone())
-                .or_default()
-                .insert(source.clone());
-        }
-    }
-
-    let seed_paths: Vec<String> = ranked_results
-        .iter()
-        .take(limit.min(MAX_GRAPH_SEEDS))
-        .map(|result| normalize_path(&result.path))
-        .collect();
-    let seed_set: BTreeSet<String> = seed_paths.iter().cloned().collect();
-    let mut candidate_scores = BTreeMap::<String, f64>::new();
-    let mut candidate_seeds = BTreeMap::<String, BTreeSet<String>>::new();
-    for (rank, seed) in seed_paths.iter().enumerate() {
-        let Some(neighbors) = adjacency.get(seed) else {
-            continue;
-        };
-        for neighbor in neighbors {
-            if seed_set.contains(neighbor) {
-                continue;
-            }
-            *candidate_scores.entry(neighbor.clone()).or_default() += 1.0 / (rank + 1) as f64;
-            if let Some(seed_page) = pages.get(seed) {
-                candidate_seeds
-                    .entry(neighbor.clone())
-                    .or_default()
-                    .insert(seed_page.title.clone());
-            }
-        }
-    }
-
-    let mut candidates: Vec<(String, f64)> = candidate_scores.into_iter().collect();
-    candidates.sort_by(|(path_a, score_a), (path_b, score_b)| {
-        score_b
-            .partial_cmp(score_a)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| path_a.cmp(path_b))
-    });
-    candidates.truncate(graph_result_quota(limit, vector_hits));
-    if candidates.is_empty() {
-        ranked_results.truncate(limit);
-        return 0;
-    }
-
-    let selected_paths: BTreeSet<String> =
-        candidates.iter().map(|(path, _)| path.clone()).collect();
-    let mut existing = BTreeMap::<String, ProjectSearchResult>::new();
-    let mut ranked_paths = Vec::new();
-    for result in ranked_results.drain(..) {
-        let path = normalize_path(&result.path);
-        ranked_paths.push(path.clone());
-        existing.insert(path, result);
-    }
-
-    let graph_count = candidates.len();
-    let base_limit = limit.saturating_sub(graph_count);
-    let mut base_results: Vec<ProjectSearchResult> = ranked_paths
-        .iter()
-        .filter(|path| !selected_paths.contains(*path))
-        .filter_map(|path| existing.get(path).cloned())
-        .take(base_limit)
-        .collect();
-
-    for (path, graph_score) in candidates {
-        if let Some(result) = existing.remove(&path) {
-            let mut result = result;
-            result.graph_related_to = candidate_seeds
-                .remove(&path)
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
-            base_results.push(result);
+    let mut graph_hits = 0;
+    for entry in result["evidence"].as_array().into_iter().flatten().take(top_k.clamp(1, 5)) {
+        let sources = entry["retrievalSources"].as_array().cloned().unwrap_or_default();
+        token_hits += usize::from(sources.iter().any(|source| source["channel"] == "keyword"));
+        vector_hits += usize::from(sources.iter().any(|source| source["channel"] == "vector"));
+        graph_hits += usize::from(sources.iter().any(|source| source["channel"] == "graph"));
+        let content = entry["text"].as_str().unwrap_or_default().to_string();
+        let score = 1.0 / (RRF_K + entry["ranks"]["query"].as_f64().unwrap_or(1.0));
+        if let Some(existing) = results.iter_mut().find(|existing| Some(existing.path.as_str()) == entry["path"].as_str()) {
+            if let Some(context) = existing.evidence_context.as_mut() { context["evidence"].as_array_mut().unwrap().push(entry.clone()); }
+            if let Some(body) = existing.content.as_mut() { body.push_str("\n\n"); body.push_str(&content); }
             continue;
         }
-        let Some(page) = pages.get(&path) else {
-            continue;
-        };
-        let related_titles = candidate_seeds
-            .remove(&path)
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let related = related_titles.join(", ");
-        base_results.push(ProjectSearchResult {
-            path: page.path.clone(),
-            title: page.title.clone(),
-            snippet: format!("Graph neighbor of {related}"),
-            title_match: false,
-            score: graph_score / (RRF_K + 1.0),
-            vector_score: None,
-            images: extract_image_refs(&page.content),
-            content: include_content.then(|| page.content.clone()),
-            graph_related_to: related_titles,
+        results.push(ProjectSearchResult {
+            path: entry["path"].as_str().unwrap_or_default().into(), title: entry["title"].as_str().unwrap_or_default().into(),
+            snippet: content.chars().take(600).collect(), title_match: entry["title"].as_str().is_some_and(|title| query_terms.iter().any(|term| title.to_lowercase().contains(term))), score, vector_score: None, images: extract_image_refs(&content),
+            content: include_content.then_some(content), graph_related_to: Vec::new(),
+            evidence_context: Some(json!({"evidence":[entry],"relations":result["relations"],"execution":result["execution"]})),
         });
     }
-    *ranked_results = base_results;
-    graph_count
-}
-
-fn normalize_graph_alias(value: &str) -> String {
-    value
-        .split('#')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .trim_end_matches(".md")
-        .replace('\\', "/")
-        .replace(' ', "-")
-        .to_lowercase()
+    Ok(ProjectSearchResponse { mode: search_mode(token_hits == 0, vector_hits, graph_hits).into(), results, token_hits, vector_hits, graph_hits, retrieval: Some(result) })
 }
 
 pub(crate) fn extract_graph_links(content: &str) -> Vec<String> {
@@ -726,7 +365,9 @@ pub(crate) fn extract_graph_links(content: &str) -> Vec<String> {
     links
 }
 
-fn extract_related_frontmatter(content: &str) -> Vec<String> {
+fn extract_related_frontmatter(content: &str) -> Vec<String> { extract_list_frontmatter(content, "related") }
+
+fn extract_list_frontmatter(content: &str, key: &str) -> Vec<String> {
     let normalized = content.replace("\r\n", "\n");
     let Some(rest) = normalized.strip_prefix("---\n") else {
         return Vec::new();
@@ -739,7 +380,7 @@ fn extract_related_frontmatter(content: &str) -> Vec<String> {
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index];
-        let Some(value) = line.trim().strip_prefix("related:") else {
+        let Some(value) = line.trim().strip_prefix(&format!("{key}:")) else {
             index += 1;
             continue;
         };
@@ -791,139 +432,7 @@ fn search_mode(token_rank_empty: bool, vector_hits: usize, graph_hits: usize) ->
     }
 }
 
-#[derive(Debug, Clone)]
-struct PageVectorResult {
-    id: String,
-    score: f32,
-    chunk_text: String,
-    heading_path: String,
-}
 
-async fn search_by_embedding(
-    project_path: &str,
-    query_embedding: Vec<f32>,
-    top_k: usize,
-) -> Result<Vec<PageVectorResult>, String> {
-    let raw_chunks = vectorstore::vector_search_chunks(
-        project_path.to_string(),
-        query_embedding,
-        (top_k * 3).max(30),
-    )
-    .await?;
-    if raw_chunks.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let mut by_page: BTreeMap<String, Vec<vectorstore::ChunkSearchResult>> = BTreeMap::new();
-    for chunk in raw_chunks {
-        by_page
-            .entry(chunk.page_id.clone())
-            .or_default()
-            .push(chunk);
-    }
-
-    let mut ranked = Vec::new();
-    for (id, mut chunks) in by_page {
-        chunks.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.chunk_index.cmp(&b.chunk_index))
-        });
-        let top_chunk = chunks[0].clone();
-        let top = top_chunk.score;
-        let tail: f32 = chunks.iter().skip(1).map(|chunk| chunk.score).sum();
-        let blended = top + (tail * 0.3).min((1.0 - top).max(0.0));
-        ranked.push(PageVectorResult {
-            id,
-            score: blended,
-            chunk_text: top_chunk.chunk_text,
-            heading_path: top_chunk.heading_path,
-        });
-    }
-    ranked.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    ranked.truncate(top_k);
-    Ok(ranked)
-}
-
-fn materialize_vector_only_results(
-    vector_results: &[PageVectorResult],
-    page_paths_by_vector_id: &BTreeMap<String, String>,
-    legacy_page_paths: &BTreeMap<String, String>,
-    project_path: &str,
-    results: &mut Vec<ProjectSearchResult>,
-    include_content: bool,
-) {
-    let mut known_paths: BTreeSet<String> = results
-        .iter()
-        .map(|result| normalize_path(&result.path))
-        .collect();
-    // Materialize path-qualified rows first. During migration a page can have
-    // both a current row and a legacy basename row; the current score/snippet
-    // must win regardless of the backend's result order.
-    for qualified_only in [true, false] {
-        for vr in vector_results {
-            let rel = if qualified_only {
-                page_paths_by_vector_id.get(&vr.id)
-            } else if page_paths_by_vector_id.contains_key(&vr.id) {
-                None
-            } else {
-                legacy_page_paths.get(&vr.id)
-            };
-            let Some(rel) = rel else {
-                continue;
-            };
-            let normalized_rel = normalize_path(rel);
-            if known_paths.contains(&normalized_rel) {
-                continue;
-            }
-            let path = Path::new(project_path).join(rel);
-            let Ok(content) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let file_name = Path::new(&rel)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let title = extract_title(&content, file_name);
-            let snippet = build_vector_snippet(vr);
-            results.push(ProjectSearchResult {
-                path: rel.clone(),
-                title,
-                snippet,
-                title_match: false,
-                score: 0.0,
-                vector_score: Some(vr.score),
-                images: extract_image_refs(&content),
-                content: include_content.then_some(content),
-                graph_related_to: Vec::new(),
-            });
-            known_paths.insert(normalized_rel);
-        }
-    }
-}
-
-fn build_vector_snippet(result: &PageVectorResult) -> String {
-    let mut text = result.chunk_text.trim().replace('\n', " ");
-    if text.is_empty() {
-        return String::new();
-    }
-    if text.chars().count() > SNIPPET_CONTEXT * 2 {
-        text = text.chars().take(SNIPPET_CONTEXT * 2).collect::<String>();
-        text.push_str("...");
-    }
-    let heading = result.heading_path.trim();
-    if heading.is_empty() {
-        text
-    } else {
-        format!("{heading}: {text}")
-    }
-}
 
 fn score_file(
     project_path: &str,
@@ -988,7 +497,7 @@ fn score_file(
         vector_score: None,
         images: extract_image_refs(content),
         content: include_content.then_some(content.to_string()),
-        graph_related_to: Vec::new(),
+        graph_related_to: Vec::new(), evidence_context: None,
     })
 }
 
@@ -1198,7 +707,7 @@ pub(crate) async fn fetch_embedding_with_retry(
                     continue;
                 }
                 return Err(format!(
-                    "Endpoint rejected input even at {} chars. Lower Settings -> Embedding -> Max Chunk Chars. {message}",
+                    "Endpoint rejected input even at {} chars. Lower Knowledge workflow -> Common settings -> Vector database -> Max Chunk Chars. {message}",
                     current.len()
                 ));
             }
@@ -1798,19 +1307,6 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
-    fn result(path: &str) -> ProjectSearchResult {
-        ProjectSearchResult {
-            path: path.to_string(),
-            title: path.to_string(),
-            snippet: String::new(),
-            title_match: false,
-            score: 0.0,
-            vector_score: None,
-            images: vec![],
-            content: None,
-            graph_related_to: Vec::new(),
-        }
-    }
 
     #[test]
     fn tokenizes_cjk_bigrams_and_chars() {
@@ -2068,151 +1564,11 @@ mod tests {
     }
 
     #[test]
-    fn rrf_combines_token_and_vector_ranks_and_keeps_vector_score() {
-        let mut results = vec![
-            result("wiki/concepts/both.md"),
-            result("wiki/concepts/token-only.md"),
-            result("wiki/concepts/vector-only.md"),
-        ];
-        let token_rank = BTreeMap::from([
-            ("wiki/concepts/both.md".to_string(), 1),
-            ("wiki/concepts/token-only.md".to_string(), 2),
-        ]);
-        let vector_rank = BTreeMap::from([("both".to_string(), 1), ("vector-only".to_string(), 2)]);
-        let vector_score =
-            BTreeMap::from([("both".to_string(), 0.95), ("vector-only".to_string(), 0.8)]);
-
-        let legacy_page_paths = BTreeMap::from([
-            ("both".to_string(), "wiki/concepts/both.md".to_string()),
-            (
-                "vector-only".to_string(),
-                "wiki/concepts/vector-only.md".to_string(),
-            ),
-        ]);
-        apply_rrf_scores(
-            &mut results,
-            &token_rank,
-            &vector_rank,
-            &vector_score,
-            &legacy_page_paths,
-        );
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-
-        assert_eq!(results[0].path, "wiki/concepts/both.md");
-        assert!((results[0].score - (1.0 / 61.0 + 1.0 / 61.0)).abs() < 0.000001);
-        assert_eq!(results[0].vector_score, Some(0.95));
-        assert!((results[1].score - (1.0 / 62.0)).abs() < 0.000001);
-        assert!((results[2].score - (1.0 / 62.0)).abs() < 0.000001);
-    }
-
-    #[test]
     fn search_mode_distinguishes_keyword_vector_and_hybrid() {
         assert_eq!(search_mode(false, 0, 0), "keyword");
         assert_eq!(search_mode(true, 3, 0), "vector");
         assert_eq!(search_mode(false, 3, 0), "hybrid");
         assert_eq!(search_mode(false, 0, 1), "hybrid");
-    }
-
-    #[test]
-    fn graph_quota_scales_from_thirty_to_fifteen_percent() {
-        assert_eq!(graph_result_quota(1, 0), 0);
-        assert_eq!(graph_result_quota(20, 0), 6);
-        assert_eq!(graph_result_quota(20, 10), 5);
-        assert_eq!(graph_result_quota(20, 20), 3);
-        assert_eq!(graph_result_quota(10, 100), 2);
-    }
-
-    #[test]
-    fn vector_only_materialization_uses_chunk_snippet_and_any_wiki_subdir() {
-        let root = tmp_project();
-        write_page(
-            &root,
-            "wiki/custom/deep-page.md",
-            "---\ntitle: Deep Page\n---\n\n# Deep Page\n\nThe literal query is absent here.",
-        );
-        let vector_results = vec![PageVectorResult {
-            id: "custom/deep-page".to_string(),
-            score: 0.91,
-            chunk_text: "A semantic chunk explains the actual reason for retrieval.".to_string(),
-            heading_path: "Section > Detail".to_string(),
-        }];
-        let mut results = Vec::new();
-        let pages = BTreeMap::from([(
-            "custom/deep-page".to_string(),
-            "wiki/custom/deep-page.md".to_string(),
-        )]);
-
-        materialize_vector_only_results(
-            &vector_results,
-            &pages,
-            &BTreeMap::new(),
-            &root.to_string_lossy(),
-            &mut results,
-            false,
-        );
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].path, "wiki/custom/deep-page.md");
-        assert_eq!(results[0].title, "Deep Page");
-        assert_eq!(results[0].vector_score, Some(0.91));
-        assert!(results[0].snippet.contains("Section > Detail"));
-        assert!(results[0].snippet.contains("semantic chunk"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn vector_only_materialization_prefers_qualified_rows_over_legacy_rows() {
-        let root = tmp_project();
-        write_page(&root, "wiki/entities/topic.md", "# Topic\n\nCurrent content.");
-        let vector_results = vec![
-            PageVectorResult {
-                id: "topic".to_string(),
-                score: 0.99,
-                chunk_text: "Stale legacy chunk".to_string(),
-                heading_path: String::new(),
-            },
-            PageVectorResult {
-                id: "entities/topic".to_string(),
-                score: 0.82,
-                chunk_text: "Current qualified chunk".to_string(),
-                heading_path: String::new(),
-            },
-        ];
-        let qualified = BTreeMap::from([(
-            "entities/topic".to_string(),
-            "wiki/entities/topic.md".to_string(),
-        )]);
-        let legacy = BTreeMap::from([(
-            "topic".to_string(),
-            "wiki/entities/topic.md".to_string(),
-        )]);
-        let mut results = Vec::new();
-
-        materialize_vector_only_results(
-            &vector_results,
-            &qualified,
-            &legacy,
-            &root.to_string_lossy(),
-            &mut results,
-            false,
-        );
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].vector_score, Some(0.82));
-        assert!(results[0].snippet.contains("Current qualified chunk"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn vector_snippet_empty_chunk_does_not_echo_query() {
-        let vector = PageVectorResult {
-            id: "empty".to_string(),
-            score: 0.5,
-            chunk_text: "  ".to_string(),
-            heading_path: "Heading".to_string(),
-        };
-
-        assert_eq!(build_vector_snippet(&vector), "");
     }
 
     #[tokio::test]
@@ -2241,13 +1597,13 @@ mod tests {
 
         assert_eq!(out.mode, "keyword");
         assert_eq!(out.results[0].title, "Attention");
-        assert!(out.results[0].title_match);
-        assert!(out.results[0].score > 100.0);
+        assert!(out.results[0].score > 0.0);
+        assert!(out.results[0].evidence_context.is_some());
         let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
-    async fn keyword_search_always_blends_available_graph_neighbors() {
+    async fn keyword_search_does_not_force_unrelated_graph_neighbors() {
         let root = tmp_project();
         write_page(
             &root,
@@ -2275,17 +1631,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(out.mode, "hybrid");
-        assert_eq!(out.graph_hits, 1);
+        assert_eq!(out.mode, "keyword");
+        assert_eq!(out.graph_hits, 0);
         assert!(out
             .results
             .iter()
             .any(|result| result.title == "Agent Runtime"));
-        assert!(out.results.iter().any(|result| {
-            result.title == "Tool Registry"
-                && result.snippet.contains("Graph neighbor")
-                && result.graph_related_to == vec!["Agent Runtime"]
-        }));
+        assert!(!out.results.iter().any(|result| result.title == "Tool Registry"));
         assert!(!out.results.iter().any(|result| result.title == "Unrelated"));
         let _ = fs::remove_dir_all(root);
     }

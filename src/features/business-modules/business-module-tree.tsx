@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
-import { ChevronDown, ChevronRight, FileText } from "lucide-react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { readFile } from "@/commands/fs"
+import { loadProjectSchema } from "@/lib/project-schema"
+import { getWikiTypeStyle, FALLBACK_TYPE_STYLE } from "@/lib/wiki-type-style"
+import { wikiTypeLabel } from "@/lib/wiki-page-types"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import { parseWikiSchemaRouting } from "@/lib/wiki-schema"
@@ -33,8 +35,11 @@ export function BusinessModuleTree() {
     setLoading(true)
     void (async () => {
       try {
-        const schema = await readFile(`${project.path.replace(/\/+$/, "")}/schema.md`)
-        const next = parseModuleCatalog(schema)
+        const [schema, modules] = await Promise.all([
+          loadProjectSchema(project.path, "analysis"),
+          loadProjectSchema(project.path, "classification"),
+        ])
+        const next = parseModuleCatalog(modules)
         if (!active) return
         setCatalog(next)
         setTypeOrder(Object.keys(parseWikiSchemaRouting(schema).typeDirs))
@@ -81,12 +86,21 @@ export function BusinessModuleTree() {
             {node.children.map((child) => renderNode(child, depth + 1))}
             <div style={{ paddingLeft: (depth + 1) * 12 }}>
               {!count && <p className="p-2 text-xs text-muted-foreground">{t("sidebar.moduleEmpty")}</p>}
-              {nodePages.map((page) => (
-                <button key={page.path} type="button" title={page.path} onClick={() => openPathInPreview(page.path)}
-                  className={`flex w-full items-center gap-2 rounded p-2 text-left text-xs hover:bg-accent ${selectedFile === page.path ? "bg-accent" : ""}`}>
-                  <FileText size={14} className="shrink-0" /><span className="truncate">{page.title}</span>
-                </button>
-              ))}
+              {nodePages.map((page) => {
+                const style = getWikiTypeStyle(page.type)
+                const TypeIcon = style.icon
+                const label = t(`sidebar.typeLabels.${page.type}`, {
+                  defaultValue: style === FALLBACK_TYPE_STYLE ? wikiTypeLabel(page.type) : style.label,
+                })
+                return (
+                  <button key={page.path} type="button" title={`${label} · ${page.path}`} onClick={() => openPathInPreview(page.path)}
+                    className={`flex w-full items-center gap-px rounded p-2 text-left text-xs hover:bg-accent ${selectedFile === page.path ? "bg-accent" : ""}`}>
+                    <TypeIcon size={14} aria-hidden="true" className={`shrink-0 ${style.iconClass}`} />
+                    <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] leading-none ${style.chipClass}`}>{label}</span>
+                    <span className="min-w-0 truncate">{page.title}</span>
+                  </button>
+                )
+              })}
             </div>
           </>
         )}

@@ -1,3 +1,4 @@
+use serde_json::Value;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -187,6 +188,8 @@ pub struct AgentReviewContext {
     pub affected_pages: Vec<String>,
     #[serde(default)]
     pub source_path: Option<String>,
+    #[serde(default, flatten)]
+    pub evidence_metadata: std::collections::BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,9 +216,13 @@ pub struct AgentReference {
 /// Lightweight graph and provenance briefing attached to wiki retrievals.
 /// Keep this bounded: the complete page body is already available through the
 /// read/search result and duplicating an unbounded graph would waste context.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentKnowledgeContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_to: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

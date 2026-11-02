@@ -1,0 +1,51 @@
+[
+  {
+    "name": "旧单文件保留自定义约束，分离规则与模块",
+    "input": "# Schema\n\n## Page Types\n| concept | wiki/concepts/ | Ideas |\n\n## Frontmatter\nRequired fields\n\n### Example\n```yaml\n# This is data\ntitle: Example\n```\n\n## Business Modules\n```json\n{\"version\":1,\"modules\":[]}\n```\n\n## Custom Policy\nPreserve original SQL.",
+    "core": "# Schema\n\n## Page Types\n| concept | wiki/concepts/ | Ideas |\n\n## Custom Policy\nPreserve original SQL.",
+    "rules": "## Frontmatter\nRequired fields\n\n### Example\n```yaml\n# This is data\ntitle: Example\n```",
+    "modules": "## Business Modules\n```json\n{\"version\":1,\"modules\":[]}\n```"
+  },
+  {
+    "name": "代码块中的模块标题不得被拆分",
+    "input": "# Schema\n~~~markdown\n## Business Modules\nExample only\n~~~\n\n## Page Types\nCore",
+    "core": "# Schema\n~~~markdown\n## Business Modules\nExample only\n~~~\n\n## Page Types\nCore",
+    "rules": "",
+    "modules": ""
+  },
+  {
+    "name": "中文标题和嵌套章节",
+    "input": "# 规范\r\n## 命名约定\r\n使用可读名称\r\n### 中文细则\r\n保留中文\r\n## 业务模块 ##\r\n```json\r\n{}\r\n```\r\n## 自定义领域规则\r\n不得丢失",
+    "core": "# 规范\n## 自定义领域规则\n不得丢失",
+    "rules": "## 命名约定\n使用可读名称\n### 中文细则\n保留中文",
+    "modules": "## 业务模块 ##\n```json\n{}\n```"
+  },
+  {
+    "name": "代码围栏长度和类型必须匹配",
+    "input": "# Schema\n````markdown\n```\n## Frontmatter\n~~~\n````\n## Page Types\nCore\n## Naming Conventions\nNames",
+    "core": "# Schema\n````markdown\n```\n## Frontmatter\n~~~\n````\n## Page Types\nCore",
+    "rules": "## Naming Conventions\nNames",
+    "modules": ""
+  },
+  {
+    "name": "未闭合模块块不泄漏给其他上下文",
+    "input": "# Schema\n## Business Modules\n```json\n{broken\n## Page Types\nNot a heading outside the fence",
+    "core": "# Schema",
+    "rules": "",
+    "modules": "## Business Modules\n```json\n{broken\n## Page Types\nNot a heading outside the fence"
+  },
+  {
+    "name": "矛盾处理作为全局规则保留",
+    "input": "# Schema\n## Contradiction Handling\nKeep both sources\n## Naming Conventions\nUse readable names",
+    "core": "# Schema\n## Contradiction Handling\nKeep both sources",
+    "rules": "## Naming Conventions\nUse readable names",
+    "modules": ""
+  },
+  {
+    "name": "空配置",
+    "input": "",
+    "core": "",
+    "rules": "",
+    "modules": ""
+  }
+]

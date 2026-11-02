@@ -30,6 +30,10 @@ pub enum AgentEvent {
         #[serde(rename = "previousContent", skip_serializing_if = "Option::is_none")]
         previous_content: Option<String>,
     },
+    FileDeleted {
+        path: String,
+        tool: String,
+    },
     MessageDelta {
         text: String,
     },

@@ -377,6 +377,12 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "pages", "embed"]) => {
             handle_embed_page(app, project_id, body)
         }
+        (&Method::Get, ["projects", project_id, "pages"]) => handle_list_pages(app, project_id, query),
+        (&Method::Post, ["projects", project_id, "sources", "read"]) => handle_read_source(app, project_id, body),
+        (&Method::Post, ["projects", project_id, "pages", "move"]) => handle_move_page(app, project_id, body),
+        (&Method::Post, ["projects", project_id, "pages", "delete"]) => {
+            handle_delete_page(app, project_id, body)
+        }
         (&Method::Post, ["projects", project_id, "pages", "write"]) => {
             handle_write_page(app, project_id, body)
         }
@@ -434,7 +440,7 @@ fn is_token_required_request(method: &Method, path: &str) -> bool {
     method == &Method::Post
         && matches!(
             parts.as_slice(),
-            ["projects", _, "pages", "embed"] | ["projects", _, "pages", "write"]
+            ["projects", _, "pages", "embed"] | ["projects", _, "pages", "write"] | ["projects", _, "pages", "delete"] | ["projects", _, "pages", "move"]
         )
 }
 
@@ -974,6 +980,7 @@ fn handle_file_content(app: &AppHandle, project_id: &str, query: &str) -> ApiRes
             "ok": true,
             "projectId": project.id,
             "path": rel,
+            "revision": agent::wiki_files::revision(&content),
             "content": content,
         })),
         Err(_) => err(415, "File is not valid UTF-8 text"),
@@ -1033,6 +1040,9 @@ fn is_public_project_rel(rel: &str) -> bool {
     let lower = rel.to_lowercase();
     lower == "purpose.md"
         || lower == "schema.md"
+        || lower == "page-rules.md"
+        || lower == "business-modules.md"
+        || lower.starts_with("schema/")
         || lower.starts_with("wiki/")
         || lower.starts_with("raw/sources/")
 }
@@ -1066,7 +1076,7 @@ fn list_public_roots(
 ) -> Result<Vec<ApiFileNode>, String> {
     let mut count = 0;
     let mut roots = Vec::new();
-    for rel in ["purpose.md", "schema.md", "wiki", "raw/sources"] {
+    for rel in ["purpose.md", "schema.md", "page-rules.md", "business-modules.md", "schema", "wiki", "raw/sources"] {
         let path = safe_join(project_path, rel)?;
         if !path.exists() {
             continue;
@@ -1267,7 +1277,12 @@ fn review_id_for_parts(item_type: &str, title: &str) -> String {
     format!("review-{h:08x}")
 }
 
-fn stable_review_id(item: &Value) -> Option<String> {
+pub(crate) fn stable_review_id(item: &Value) -> Option<String> {
+    if item.get("schemaVersion").and_then(Value::as_u64) == Some(2) {
+        let logical = item.get("logicalId")?.as_str()?;
+        let evidence = item.get("evidenceVersion")?.as_str()?;
+        return Some(format!("review-v2-{logical}-{evidence}"));
+    }
     let item_type = item.get("type").and_then(Value::as_str)?;
     let title = item.get("title").and_then(Value::as_str)?;
     Some(review_id_for_parts(item_type, title))
@@ -1276,6 +1291,7 @@ fn stable_review_id(item: &Value) -> Option<String> {
 fn review_id_matches(item: &Value, requested_id: &str) -> bool {
     item.get("id").and_then(Value::as_str) == Some(requested_id)
         || stable_review_id(item).as_deref() == Some(requested_id)
+        || item["legacyIds"].as_array().is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(requested_id)))
 }
 
 fn load_review_items(project_path: &str, query: &ReviewQuery) -> Result<Vec<Value>, String> {
@@ -1318,6 +1334,8 @@ fn load_review_items(project_path: &str, query: &ReviewQuery) -> Result<Vec<Valu
         if !query.status.matches(resolved) {
             continue;
         }
+        if query.status != ReviewStatus::All && item["hidden"].as_bool() == Some(true) { continue; }
+        if query.status == ReviewStatus::Unresolved && item["historical"].as_bool() == Some(true) { continue; }
         if let Some(item_type) = &query.item_type {
             if item.get("type").and_then(Value::as_str) != Some(item_type.as_str()) {
                 continue;
@@ -1338,6 +1356,9 @@ fn sanitize_review_item(item: &Value) -> Value {
         out.insert("id".to_string(), Value::String(id));
     } else {
         copy_string_field(item, &mut out, "id");
+    }
+    for key in ["schemaVersion", "logicalId", "evidenceVersion", "subtype", "runIds", "evidence", "outcome", "risk", "historical", "hidden", "resolvedEvidenceVersion", "legacyIds", "dismissed", "resolutionUpdatedAt"] {
+        if let Some(value) = item.get(key) { out.insert(key.to_string(), value.clone()); }
     }
     copy_string_field(item, &mut out, "type");
     copy_string_field(item, &mut out, "title");
@@ -1517,6 +1538,9 @@ fn copy_review_options(item: &Value, out: &mut Map<String, Value>) {
             if let Some(action) = option.get("action").and_then(Value::as_str) {
                 sanitized.insert("action".to_string(), Value::String(action.to_string()));
             }
+            if let Some(kind) = option.get("kind").and_then(Value::as_str) {
+                sanitized.insert("kind".to_string(), Value::String(kind.to_string()));
+            }
             if sanitized.is_empty() {
                 None
             } else {
@@ -1648,6 +1672,7 @@ fn patch_review_item(
     resolved: bool,
     action: Option<&str>,
 ) -> Result<bool, String> {
+    let _mutation = crate::mutation::lock()?;
     let path = Path::new(project_path).join(".llm-wiki/review.json");
     let mut parsed = match read_raw_review_array(&path)? {
         Some(parsed) => parsed,
@@ -1688,6 +1713,7 @@ fn resolve_review_items(
     ids: &[String],
     action: Option<&str>,
 ) -> Result<(Vec<String>, Vec<String>), String> {
+    let _mutation = crate::mutation::lock()?;
     let path = Path::new(project_path).join(".llm-wiki/review.json");
     let mut parsed = match read_raw_review_array(&path)? {
         Some(parsed) => parsed,
@@ -1739,6 +1765,10 @@ fn resolve_review_items(
 fn apply_resolution(item: &mut Value, resolved: bool, action: Option<&str>) {
     if let Some(obj) = item.as_object_mut() {
         obj.insert("resolved".to_string(), Value::Bool(resolved));
+        obj.insert("resolutionUpdatedAt".to_string(), json!(chrono::Utc::now().timestamp_millis()));
+        if resolved {
+            if let Some(version) = obj.get("evidenceVersion").cloned() { obj.insert("resolvedEvidenceVersion".to_string(), version); }
+        } else { obj.remove("resolvedEvidenceVersion"); obj.remove("dismissed"); obj.insert("hidden".into(), Value::Bool(false)); }
         if !resolved {
             obj.remove("resolvedAction");
         } else if let Some(action) = action {
@@ -1766,7 +1796,7 @@ fn read_raw_review_array(path: &Path) -> Result<Option<Value>, String> {
 fn write_raw_review_array(path: &Path, parsed: &Value) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(parsed)
         .map_err(|err| format!("Failed to serialize review state: {err}"))?;
-    fs::write(path, serialized).map_err(|err| format!("Failed to write review state: {err}"))
+    crate::mutation::atomic_write(path, serialized.as_bytes())
 }
 
 #[derive(Deserialize)]
@@ -1793,6 +1823,65 @@ struct WritePageRequest {
     content: String,
     #[serde(default)]
     allow_overwrite: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeletePageRequest { path: String }
+
+/// 页面列表支持前缀和版本化分页，避免把搜索召回误当完整文件列表。
+fn handle_list_pages(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) { Ok(p) => p, Err(e) => return err(404, e) };
+    let params = parse_query(query);
+    let mut input = Map::new();
+    for (key, value) in params {
+        if matches!(key.as_str(), "offset" | "limit") {
+            let Ok(number) = value.parse::<usize>() else { return err(400, format!("{key} 须为非负整数")); };
+            input.insert(key, json!(number));
+        } else if key != "token" { input.insert(key, json!(value)); }
+    }
+    let request = match serde_json::from_value(Value::Object(input)) { Ok(r) => r, Err(e) => return err(400, e.to_string()) };
+    match agent::wiki_files::list_pages(&project.path, request) {
+        Ok(result) => ok(json!({"ok":true,"projectId":project.id,"result":result})), Err(e) => err(400, e),
+    }
+}
+
+/// 原始资料读取复用 Agent 的行列范围、正文版本和提取缓存校验。
+fn handle_read_source(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) { Ok(p) => p, Err(e) => return err(404, e) };
+    let request = match serde_json::from_str(body) { Ok(r) => r, Err(e) => return err(400, format!("Invalid JSON: {e}")) };
+    match agent::wiki_files::read_source(&project.path, request) {
+        Ok(result) => ok(json!({"ok":true,"projectId":project.id,"result":result})), Err(e) => err(400, e),
+    }
+}
+
+/// 移动属于变更接口，强制 Token，目标存在时不提供覆盖选项。
+fn handle_move_page(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) { Ok(p) => p, Err(e) => return err(404, e) };
+    let request = match serde_json::from_str(body) { Ok(r) => r, Err(e) => return err(400, format!("Invalid JSON: {e}")) };
+    let config = load_embedding_config(app);
+    match tauri::async_runtime::block_on(agent::wiki_move::move_wiki_page(project.path, request, config)) {
+        Ok(result) => ok(json!({"ok":true,"projectId":project.id,"result":result})),
+        Err(e) => err(if e.starts_with("FILE_APPROVAL_") || e.contains("已存在") { 409 } else { 400 }, e),
+    }
+}
+
+/// 删除与写入一样必须携带有效 Token，不能借免鉴权读接口执行变更。
+fn handle_delete_page(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project, Err(error) => return err(404, error),
+    };
+    let request: DeletePageRequest = match serde_json::from_str(body) {
+        Ok(request) => request, Err(error) => return err(400, format!("Invalid JSON: {error}")),
+    };
+    match tauri::async_runtime::block_on(agent::wiki_delete::delete_wiki_pages(project.path, vec![request.path])) {
+        Ok(result) => ok(json!({ "ok": true, "projectId": project.id, "result": result })),
+        Err(error) => {
+            let status = if error.starts_with("FILE_APPROVAL_REQUIRED:") { 409 }
+                else if error.contains("页面不存在") { 404 } else { 400 };
+            err(status, error)
+        }
+    }
 }
 
 fn handle_write_page(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
@@ -1909,21 +1998,13 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
     }
     let top_k = req.top_k.unwrap_or(10).clamp(1, MAX_SEARCH_RESULTS);
     let query = req.query;
-    let query_embedding =
-        match tauri::async_runtime::block_on(commands::search::resolve_query_embedding(
-            &query,
-            req.query_embedding,
-            load_embedding_config(app),
-        )) {
-            Ok(embedding) => embedding,
-            Err(e) => return err(400, e),
-        };
-    match tauri::async_runtime::block_on(commands::search::search_project_inner(
+    match tauri::async_runtime::block_on(commands::search::search_with_evidence(
         project.path.clone(),
         query,
         top_k,
         req.include_content.unwrap_or(false),
-        query_embedding,
+        req.query_embedding,
+        load_embedding_config(app),
     )) {
         Ok(search) => ok(json!({
             "ok": true,
@@ -1934,6 +2015,7 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
             "vectorHits": search.vector_hits,
             "graphHits": search.graph_hits,
             "results": search.results,
+            "retrieval": search.retrieval,
         })),
         Err(e) => err(500, e),
     }
@@ -3176,6 +3258,10 @@ mod tests {
         assert!(is_public_project_rel("wiki/index.md"));
         assert!(is_public_project_rel("Wiki/index.md"));
         assert!(is_public_project_rel("raw/sources/source.md"));
+        assert!(is_public_project_rel("schema/page-rules.md"));
+        assert!(is_public_project_rel("page-rules.md"));
+        assert!(is_public_project_rel("business-modules.md"));
+        assert!(is_public_project_rel("schema/business-modules.md"));
         assert!(is_public_project_rel("Raw/Sources/source.md"));
         assert!(!is_public_project_rel(".llm-wiki/file-change-queue.json"));
         assert!(!is_public_project_rel("wiki/.draft.md"));
@@ -3732,6 +3818,8 @@ mod tests {
 
     #[test]
     fn paid_or_mutating_agent_routes_always_require_a_token() {
+        assert!(is_token_required_request(&Method::Post, "/api/v1/projects/current/pages/delete"));
+        assert!(is_token_required_request(&Method::Post, "/api/v1/projects/current/pages/move"));
         assert!(is_token_required_request(
             &Method::Post,
             "/api/v1/projects/current/pages/embed"

@@ -562,7 +562,7 @@ fn rescan_watch_roots(
     // watches can miss subtree creation. Other platforms reconcile source
     // inputs only to avoid a recurring generated-wiki scan.
     let prefixes = if cfg!(target_os = "linux") {
-        &["raw/sources", "wiki", "purpose.md", "schema.md"][..]
+        &["raw/sources", "wiki", "purpose.md", "schema.md", "page-rules.md", "business-modules.md", "schema"][..]
     } else {
         &["raw/sources"][..]
     };
@@ -687,7 +687,7 @@ fn enqueue_startup_rescan_changes(
     enqueue_rescan_changes_for_prefixes(
         root,
         project_id,
-        &["raw/sources", "wiki", "purpose.md", "schema.md"],
+        &["raw/sources", "wiki", "purpose.md", "schema.md", "page-rules.md", "business-modules.md", "schema"],
         source_watch_config,
     )
 }
@@ -1169,7 +1169,11 @@ fn should_watch_rel(rel: &str, rules: &SourceWatchRules) -> bool {
         }
         return true;
     }
-    rel == "purpose.md" || rel == "schema.md" || (rel.starts_with("wiki/") && rel.ends_with(".md"))
+    rel == "purpose.md"
+        || rel == "schema.md"
+        || rel == "page-rules.md"
+        || rel == "business-modules.md"
+        || ((rel.starts_with("wiki/") || rel.starts_with("schema/")) && rel.ends_with(".md"))
 }
 
 struct SourceWatchRules<'a> {
@@ -1617,6 +1621,11 @@ mod tests {
         .unwrap();
         fs::write(root.join("purpose.md"), "purpose").unwrap();
         fs::write(root.join("schema.md"), "schema").unwrap();
+        fs::write(root.join("page-rules.md"), "root rules").unwrap();
+        fs::write(root.join("business-modules.md"), "root modules").unwrap();
+        fs::create_dir_all(root.join("schema")).unwrap();
+        fs::write(root.join("schema/page-rules.md"), "rules").unwrap();
+        fs::write(root.join("schema/business-modules.md"), "modules").unwrap();
         fs::write(root.join("unwatched/deep/note.md"), "ignore").unwrap();
 
         ensure_sync_dir(&root).unwrap();
@@ -1632,6 +1641,10 @@ mod tests {
         assert!(paths.contains("wiki/entities/topic.md"));
         assert!(paths.contains("purpose.md"));
         assert!(paths.contains("schema.md"));
+        assert!(paths.contains("schema/page-rules.md"));
+        assert!(paths.contains("page-rules.md"));
+        assert!(paths.contains("business-modules.md"));
+        assert!(paths.contains("schema/business-modules.md"));
         assert!(!paths.contains("unwatched/deep/note.md"));
 
         let _ = fs::remove_dir_all(root);

@@ -25,6 +25,7 @@ interface BackendSearchResponse {
   tokenHits: number
   vectorHits: number
   graphHits?: number
+  retrieval?: { status: "completed" | "partial" | "disabled" | "failed"; execution: { warnings: string[]; budgetReached: string[] } }
 }
 
 const STOP_WORDS = new Set([
@@ -63,7 +64,11 @@ export async function searchWiki(
   projectPath: string,
   query: string,
 ): Promise<SearchResult[]> {
-  if (!query.trim()) return []
+  return (await searchWikiWithStatus(projectPath, query)).results
+}
+
+export async function searchWikiWithStatus(projectPath: string, query: string): Promise<{ results: SearchResult[]; status: string; warnings: string[] }> {
+  if (!query.trim()) return { results: [], status: "completed", warnings: [] }
   const pp = normalizePath(projectPath)
   const embCfg = useWikiStore.getState().embeddingConfig
 
@@ -76,8 +81,9 @@ export async function searchWiki(
     embeddingConfig: embCfg,
   })
 
-  return response.results.map((result) => ({
+  const results = response.results.map((result) => ({
     ...result,
     path: `${pp}/${normalizePath(result.path).replace(/^\/+/, "")}`,
   }))
+  return { results, status: response.retrieval?.status ?? "completed", warnings: [...(response.retrieval?.execution.warnings ?? []), ...(response.retrieval?.execution.budgetReached ?? [])] }
 }

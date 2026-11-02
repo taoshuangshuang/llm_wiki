@@ -1,0 +1,39 @@
+{
+  "name": "http-guided",
+  "request": {
+    "message": "imeta 是什么？请先检索能直接定义该概念的主题页、概念页或总览页，说明定位、核心职责和上下游边界；故障案例与配置限制只作为补充，不用它们代替概念定义。区分现行资料和历史资料，只引用本次实际检索或阅读得到的来源；依据不足时明确指出。",
+    "mode": "standard",
+    "topK": 10,
+    "includeContent": false,
+    "persistSession": false,
+    "tools": {
+      "wiki": true,
+      "web": false,
+      "anytxt": false
+    }
+  },
+  "seconds": 437.12,
+  "rawBytes": 2245961,
+  "compactBytes": 6034,
+  "usage": {
+    "completionChars": 3465,
+    "promptChars": 86964,
+    "referenceCount": 13,
+    "toolEventCount": 58
+  },
+  "referencePaths": [
+    "wiki/cases/医药行业租户开通到核心2导致元数据缺失.md",
+    "wiki/concepts/MDD 与 YPD 调用 imeta 查询的入口与职责边界.md",
+    "wiki/constraints/imeta 特征属性处理使用边界约束.md",
+    "wiki/data-models/imeta 运行态常用模型（Entity与Property）字段结构.md",
+    "wiki/constraints/imeta 查询配置参数与能力边界.md",
+    "wiki/constraints/元数据建模核心约束.md",
+    "wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md",
+    "wiki/modules/元数据体系多模块工程结构与职责划分.md",
+    "wiki/topics/元数据（BIP平台）.md",
+    "wiki/implementations/querySchema-SQL构建与查询行为.md",
+    "wiki/topics/QuerySchema（imeta 查询 API）.md",
+    "wiki/designs/imeta QuerySchema转SQL与实体获取流程.md",
+    "wiki/constraints/QuerySchema 点语法与跨域使用边界.md"
+  ]
+}

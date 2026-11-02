@@ -57,11 +57,8 @@ export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> |
   const parsingConcurrency = Number.isFinite(rawParsingConcurrency)
     ? clampUserConcurrency(rawParsingConcurrency)
     : DEFAULT_SOURCE_WATCH_CONFIG.parsingConcurrency
-  const rawIngestConcurrency = config?.ingestConcurrency
-    ?? DEFAULT_SOURCE_WATCH_CONFIG.ingestConcurrency
-  const ingestConcurrency = Number.isFinite(rawIngestConcurrency)
-    ? clampUserConcurrency(rawIngestConcurrency)
-    : DEFAULT_SOURCE_WATCH_CONFIG.ingestConcurrency
+  // 入库流水线固定串行，旧配置值读取时归一化。
+  const ingestConcurrency = 1
   const includeExtensions = normalizeExtensions(
     config?.includeExtensions ?? DEFAULT_SOURCE_WATCH_CONFIG.includeExtensions,
   )
@@ -70,7 +67,6 @@ export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> |
   return {
     enabled: config?.enabled ?? DEFAULT_SOURCE_WATCH_CONFIG.enabled,
     autoIngest: config?.autoIngest ?? DEFAULT_SOURCE_WATCH_CONFIG.autoIngest,
-    generateSourceSummary: config?.generateSourceSummary === true,
     persistExtractedMarkdown:
       config?.persistExtractedMarkdown ?? DEFAULT_SOURCE_WATCH_CONFIG.persistExtractedMarkdown,
     parsingConcurrency,

@@ -33,20 +33,17 @@ const BASIC_INDEX = `# Index
 
 const BASIC_SCHEMA = `# Schema
 
-## wiki/sources/
-Each ingested source has a summary page here.
-
 ## wiki/concepts/
 Each concept gets its own page.
 `
 
 export const ingestScenarios: IngestScenario[] = [
-  // 1. basic-new-source — new concept wiki page + source summary, no reviews
+  // 1. basic-new-source — 生成知识页并直接引用原始来源，不生成摘要。
   {
     name: "basic-new-source",
     description:
-      "Stage 2 emits a single concept page + a source summary page. No " +
-      "REVIEW blocks. The runner must see both files on disk and zero " +
+      "Stage 2 emits a single concept page. No " +
+      "REVIEW blocks. The runner must see the knowledge page on disk and zero " +
       "reviews in the store.",
     initialWiki: {
       "purpose.md": BASIC_PURPOSE,
@@ -72,10 +69,9 @@ export const ingestScenarios: IngestScenario[] = [
       "",
       "## Recommendations",
       "- Create wiki/concepts/rope.md",
-      "- Create wiki/sources/rope-paper.md",
     ].join("\n"),
     generationResponse: [
-      "I'll create one concept page and the source summary.",
+      "I'll create one concept page citing the original source.",
       "",
       "---FILE: wiki/concepts/rope.md---",
       "---",
@@ -90,28 +86,16 @@ export const ingestScenarios: IngestScenario[] = [
       "to encode absolute position while preserving relative-position invariance.",
       "---END FILE---",
       "",
-      "---FILE: wiki/sources/rope-paper.md---",
-      "---",
-      "title: \"Source: rope-paper.md\"",
-      "sources: [rope-paper.md]",
-      "---",
-      "",
-      "# Source: rope-paper.md",
-      "",
-      "Paper introducing [[Rotary Position Embedding]].",
-      "---END FILE---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/rope.md",
-        "wiki/sources/rope-paper.md",
       ],
       fileContains: {
         "wiki/concepts/rope.md": [
           "title: Rotary Position Embedding",
           "[[attention]]",
         ],
-        "wiki/sources/rope-paper.md": ["rope-paper.md"],
       },
       reviewsCreated: [],
     },
@@ -119,10 +103,10 @@ export const ingestScenarios: IngestScenario[] = [
 
   // 2. generates-review-items — REVIEW blocks in generation become store items
   {
-    name: "generates-review-items",
+    name: "defers-generation-review-items",
     description:
       "Stage 2 emits one FILE and two REVIEW blocks (missing-page + " +
-      "suggestion). Both reviews must appear in the store after ingest.",
+      "suggestion). 生成阶段不发布正式事项，由写后后台核实。",
     initialWiki: {
       "purpose.md": BASIC_PURPOSE,
       "schema.md": BASIC_SCHEMA,
@@ -135,13 +119,13 @@ export const ingestScenarios: IngestScenario[] = [
     },
     analysisResponse: "## Key Concepts\n- FlashAttention\n",
     generationResponse: [
-      "---FILE: wiki/sources/flash-attention.md---",
+      "---FILE: wiki/concepts/io-aware-attention.md---",
       "---",
-      "title: \"Source: flash-attention.md\"",
+      "title: \"IO-aware attention\"",
       "sources: [flash-attention.md]",
       "---",
       "",
-      "# Source: flash-attention.md",
+      "# IO-aware attention",
       "",
       "FlashAttention is mentioned here.",
       "---END FILE---",
@@ -149,7 +133,7 @@ export const ingestScenarios: IngestScenario[] = [
       "---REVIEW: missing-page | FlashAttention---",
       "The source introduces FlashAttention but no dedicated page exists.",
       "OPTIONS: Create page | Skip",
-      "PAGES: wiki/sources/flash-attention.md",
+      "PAGES: wiki/concepts/io-aware-attention.md",
       "---END REVIEW---",
       "",
       "---REVIEW: suggestion | Add IO-aware algorithms survey---",
@@ -157,11 +141,8 @@ export const ingestScenarios: IngestScenario[] = [
       "---END REVIEW---",
     ].join("\n"),
     expected: {
-      writtenPaths: ["wiki/sources/flash-attention.md"],
-      reviewsCreated: [
-        { type: "missing-page", titleContains: "FlashAttention" },
-        { type: "suggestion", titleContains: "IO-aware" },
-      ],
+      writtenPaths: ["wiki/concepts/io-aware-attention.md"],
+      reviewsCreated: [],
     },
   },
 
@@ -196,20 +177,10 @@ export const ingestScenarios: IngestScenario[] = [
       "Multi-head [[attention]] runs several attention layers in parallel.",
       "---END FILE---",
       "",
-      "---FILE: wiki/sources/multi-head.md---",
-      "---",
-      "title: \"Source: multi-head.md\"",
-      "---",
-      "",
-      "# Source: multi-head.md",
-      "",
-      "Source for multi-head [[attention]].",
-      "---END FILE---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/multi-head-attention.md",
-        "wiki/sources/multi-head.md",
       ],
       fileContains: {
         "wiki/concepts/multi-head-attention.md": ["[[attention]]"],
@@ -244,20 +215,10 @@ export const ingestScenarios: IngestScenario[] = [
       "Transformer 是一种基于 [[注意力机制]] 的神经网络架构。",
       "---END FILE---",
       "",
-      "---FILE: wiki/sources/transformer-survey.md---",
-      "---",
-      "title: \"Source: transformer-survey.md\"",
-      "---",
-      "",
-      "# Source: transformer-survey.md",
-      "",
-      "关于 [[Transformer]] 的综述。",
-      "---END FILE---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/transformer.md",
-        "wiki/sources/transformer-survey.md",
       ],
       fileContains: {
         "wiki/concepts/transformer.md": [

@@ -383,6 +383,7 @@ pub async fn restore_file_history(
     entry_id: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _commit = crate::mutation::lock()?;
         let _mutation = super::file_approval::lock_mutations()?;
         let (root, file) = checked_file(&project_path, &file_path)?;
         let content = {
@@ -425,7 +426,7 @@ pub async fn restore_file_history(
                 fs::write(&store_path, updated).map_err(|e| e.to_string())?;
                 prune_history_store(&root, &store_path);
             }
-            fs::write(&file, &entry.content).map_err(|e| e.to_string())?;
+            crate::mutation::atomic_write(&file, entry.content.as_bytes())?;
             entry.content
         };
         Ok(content)

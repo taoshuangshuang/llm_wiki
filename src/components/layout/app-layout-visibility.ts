@@ -1,14 +1,14 @@
 import type { WikiState } from "@/stores/wiki-store"
-import { isStandaloneView } from "./research-panel-nav"
+import { isStandaloneView } from "./standalone-view"
 
 export function getAppLayoutVisibility(
   activeView: WikiState["activeView"],
-  researchPanelOpen: boolean,
   reviewConversationOpen = false,
+  previewReturnView?: WikiState["previewReturnView"],
 ): { showLeftPanel: boolean; hasRightPanel: boolean } {
-  const isStandalone = isStandaloneView(activeView)
+  const isStandalone = isStandaloneView(activeView) || (activeView === "wiki" && previewReturnView === "sources")
   return {
     showLeftPanel: !isStandalone,
-    hasRightPanel: !isStandalone && (researchPanelOpen || reviewConversationOpen),
+    hasRightPanel: !isStandalone && reviewConversationOpen,
   }
 }

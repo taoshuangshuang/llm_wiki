@@ -62,7 +62,7 @@ export function parseReviewQuestions(output: string): ReviewQuestion[] {
   return questions
 }
 
-/** 仅将用户主动选择的结论送入会话，后续修改方案仍需明确。 */
+/** 将用户主动选择的结论及处理要求送入会话，明确结论直接用于页面修正。 */
 export function reviewChoiceMessage(questions: ReviewQuestion[], answers: Record<number, string>, introduction: string): string {
   return [introduction, ...questions.map((question, index) => `${index + 1}. ${question.question}\n${answers[index]}`)].join("\n\n")
 }

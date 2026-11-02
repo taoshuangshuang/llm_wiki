@@ -8,6 +8,7 @@
 pub mod cancel;
 pub mod context;
 pub mod events;
+pub mod ingest;
 pub mod permissions;
 pub mod provider;
 pub mod router;
@@ -17,6 +18,9 @@ pub mod skills;
 pub mod tools;
 pub mod types;
 pub mod workspace;
+pub mod wiki_delete;
+pub mod wiki_files;
+pub mod wiki_move;
 
 pub use runtime::AgentRuntime;
 pub use types::AgentChatRequest;

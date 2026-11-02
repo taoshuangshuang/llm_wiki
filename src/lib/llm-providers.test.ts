@@ -573,6 +573,13 @@ describe("Ollama / custom (chat_completions) — vision content", () => {
 })
 
 describe("reasoning controls", () => {
+  it.each(["off", "low", "high", "max", "auto"] as const)("官方 GLM-5.3-Flash 正确传递 %s 推理设置", (mode) => {
+    const config = mkConfig({ provider: "custom", model: "GLM-5.3-Flash", customEndpoint: "https://open.bigmodel.cn/api/paas/v4" })
+    const body = getProviderConfig(config).buildBody([{ role: "user", content: "提取事实" }], { reasoning: { mode } }) as Record<string, unknown>
+    expect(body.thinking).toEqual({ type: "enabled" })
+    expect(body.reasoning_effort).toBe(mode === "auto" ? undefined : mode === "off" ? "low" : mode)
+  })
+
   it.each(["off", "low"] as const)("GLM-5.3 入库 %s 明确使用 low，避免静默使用默认深度思考", (mode) => {
     const config = mkConfig({ provider: "custom", model: "GLM-5.3", customEndpoint: "https://open.bigmodel.cn/api/paas/v4" })
     const body = getProviderConfig(config).buildBody([{ role: "user", content: "提取来源事实" }], {

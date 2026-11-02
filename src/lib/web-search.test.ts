@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { hasConfiguredDeepResearchSources, hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
+import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -110,18 +110,4 @@ describe("webSearch", () => {
     expect(resolved.ollamaUrl).toBe("https://ollama.com")
   })
 
-  it("tracks Deep Research source configuration independently from the active web provider", () => {
-    expect(hasConfiguredDeepResearchSources({
-      provider: "none",
-      apiKey: "",
-      deepResearchSource: "anytxt",
-      anyTxt: { enabled: true, endpoint: "http://127.0.0.1:9920" },
-    })).toBe(true)
-    expect(hasConfiguredDeepResearchSources({
-      provider: "none",
-      apiKey: "",
-      deepResearchSource: "both",
-      anyTxt: { enabled: false, endpoint: "" },
-    })).toBe(false)
-  })
 })

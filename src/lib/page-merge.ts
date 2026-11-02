@@ -19,9 +19,8 @@
  *      type/title shifting breaks wikilinks; created is a one-time
  *      stamp.
  *
- * Fallback: any LLM failure or sanity-check rejection falls back to
- * the previous (Array-merged-frontmatter + new body) behavior, with
- * an optional backup of the existing content for user recovery.
+ * 合并失败保护：模型失败或结果校验不通过时抛错，调用方保留旧页并
+ * 交给入库队列重试，不以新稿正文回退覆盖。单来源修订替换仍可备份。
  */
 import { parseFrontmatter } from "./frontmatter"
 import { mergeArrayFieldsIntoContent } from "./sources-merge"
@@ -50,9 +49,20 @@ const LOCKED_FIELDS = ["type", "title", "created"] as const
  * the merge — the LLM almost certainly stripped content rather than
  * legitimately deduplicating. 0.7 allows for ~30% legitimate dedup
  * compression while catching obvious truncation / lazy summaries.
+ * 长度统一按非空白字符统计，避免表格对齐空格、缩进及换行造成误判；
+ * 该比例仅用于检测异常缩减，不能证明字段和事实完整保留。
  */
 const BODY_SHRINK_THRESHOLD = 0.7
 const HTTP_URL_RE = /https?:\/\/[^\s<>"'\])]+/gi
+
+/** 模型已返回但正文不可信，允许调用方采用可追溯写入降级；环境错误仍透传。 */
+export class MergeQualityError extends Error {}
+
+export interface MergeDecision {
+  status: "merged" | "use-incoming" | "legacy"
+  content: string
+  reason?: string
+}
 
 export interface MergeFn {
   /**
@@ -66,12 +76,11 @@ export interface MergeFn {
     incomingContent: string,
     sourceFileName: string,
     signal?: AbortSignal,
-  ): Promise<string>
+  ): Promise<string | MergeDecision>
 }
 
 export interface MergePageOptions {
-  /** Source filename being ingested — passed through to the merger
-   *  and used in fallback log messages. */
+  /** Source filename being ingested — passed through to the merger. */
   sourceFileName: string
   /** Wiki-relative page path (e.g. wiki/entities/foo.md). Used only
    *  for log messages today; the file write itself is the caller's
@@ -79,9 +88,7 @@ export interface MergePageOptions {
   pagePath: string
   /** Abort signal forwarded to the merger. */
   signal?: AbortSignal
-  /** Best-effort hook to back up the existing content before any
-   *  fallback write. Errors are swallowed — backup must never
-   *  block the merge. */
+  /** 单来源修订替换前的尽力备份；失败不影响既有替换行为。 */
   backup?: (existingContent: string) => Promise<void>
   /** Date provider for the `updated` field. Injectable for
    *  deterministic tests. Defaults to today's UTC date. */
@@ -91,8 +98,8 @@ export interface MergePageOptions {
    * retaining union fields, locked metadata, and a recovery backup.
    */
   replaceExistingBody?: boolean
-  /** 跨目录复用时禁止以新正文回退覆盖旧页；合并失败交由调用方处理。 */
-  requireSuccessfulMerge?: boolean
+  /** 合并决策作为业务事件由调用方持久化，旧协议不推断为没有歧义。 */
+  onDecision?: (decision: MergeDecision) => Promise<void>
 }
 
 export async function mergePageContent(
@@ -146,49 +153,36 @@ export async function mergePageContent(
     return normalizeMalformedWikilinks(identicalBody)
   }
 
-  // Step 2 — ask the merger to produce a unified body. Failures fall
-  // through to the array-merged-only path with a best-effort backup.
-  let llmOutput: string
-  try {
-    llmOutput = await merger(
-      existingContent,
-      arrayMerged,
-      opts.sourceFileName,
-      opts.signal,
-    )
-  } catch (err) {
-    if (opts.requireSuccessfulMerge) throw err
-    console.warn(
-      `[page-merge] LLM merge failed for ${opts.pagePath}, falling back to incoming + array-field union: ${err instanceof Error ? err.message : err}`,
-    )
-    await tryBackup(opts, existingContent)
-    return normalizeMalformedWikilinks(arrayMerged)
+  // Step 2 — ask the merger to produce a unified body.
+  // 所有目标采用同一失败策略：透传异常，不提供可覆盖旧页的回退内容。
+  const response = await merger(
+    existingContent,
+    arrayMerged,
+    opts.sourceFileName,
+    opts.signal,
+  )
+  const decision: MergeDecision = typeof response === "string" ? { status: "legacy", content: response, reason: "旧合并协议未明确返回内容歧义判断" } : response
+  await opts.onDecision?.(decision)
+  if (decision.status === "use-incoming") {
+    throw new MergeQualityError(decision.reason || "合并未保留旧页，拒绝以新增稿覆盖")
   }
+
+  let llmOutput = decision.content
 
   // Sanity 1: LLM output must parse as a frontmatter-bearing wiki
   // page. No-frontmatter output would silently corrupt the page.
   const llmParsed = parseFrontmatter(llmOutput)
   if (llmParsed.frontmatter === null) {
-    if (opts.requireSuccessfulMerge) throw new Error("同名页面合并结果缺少有效 frontmatter，保留旧页")
-    console.warn(
-      `[page-merge] LLM output for ${opts.pagePath} has no frontmatter — rejecting, falling back`,
-    )
-    await tryBackup(opts, existingContent)
-    return normalizeMalformedWikilinks(arrayMerged)
+    throw new MergeQualityError(`页面合并结果缺少有效 frontmatter：${opts.pagePath}`)
   }
 
   // Sanity 2: body length. Reject obvious truncation / lazy summary.
-  const oldBodyLen = oldParsed.body.length
-  const newBodyLen = arrayMergedParsed.body.length
-  const llmBodyLen = llmParsed.body.length
+  // 仅调整校验计数，不修改正文中的空白，保留表格、代码块等原始格式。
+  const [oldBodyLen, newBodyLen, llmBodyLen] = [oldParsed.body, arrayMergedParsed.body, llmParsed.body]
+    .map((body) => body.replace(/\s/g, "").length)
   const minThreshold = Math.max(oldBodyLen, newBodyLen) * BODY_SHRINK_THRESHOLD
   if (llmBodyLen < minThreshold) {
-    if (opts.requireSuccessfulMerge) throw new Error("同名页面合并结果正文缩减过多，保留旧页")
-    console.warn(
-      `[page-merge] LLM merge for ${opts.pagePath} produced body ${llmBodyLen} chars, below threshold ${minThreshold.toFixed(0)} (max input was ${Math.max(oldBodyLen, newBodyLen)}) — rejecting, falling back`,
-    )
-    await tryBackup(opts, existingContent)
-    return normalizeMalformedWikilinks(arrayMerged)
+    throw new MergeQualityError(`页面合并结果正文缩减过多：${opts.pagePath}（${llmBodyLen} < ${minThreshold.toFixed(0)} 非空白字符）`)
   }
 
   llmOutput = removeIntroducedReservedExampleUrls(

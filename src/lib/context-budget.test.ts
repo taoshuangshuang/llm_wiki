@@ -11,7 +11,31 @@
  *   - degenerate inputs (0, undefined, NaN)
  */
 import { describe, it, expect } from "vitest"
-import { computeContextBudget } from "./context-budget"
+import { computeContextBudget, computeRemainingOutputBudget } from "./context-budget"
+
+describe("审阅剩余输出额度", () => {
+  it("按实际输入扣除安全余量，短输入不再被固定 15% 或 8K 限制", () => {
+    const budget = computeRemainingOutputBudget(128_000, 12_000)
+    expect(budget).toEqual({ maxCtx: 128_000, safetyChars: 1_024, outputTokens: 28_744 })
+    expect(computeRemainingOutputBudget(128_000, 40_000).outputTokens).toBe(21_744)
+  })
+
+  it("输入增加时缩小输出额度，保持输入和估算输出不超过字符预算", () => {
+    for (const inputChars of [0, 1, 10_000, 120_000, 126_976, 128_000, 200_000]) {
+      const budget = computeRemainingOutputBudget(128_000, inputChars)
+      expect(budget.outputTokens).toBeGreaterThanOrEqual(0)
+      if (budget.outputTokens > 0) expect(inputChars + budget.safetyChars + budget.outputTokens * 4).toBeLessThanOrEqual(budget.maxCtx)
+    }
+    expect(computeRemainingOutputBudget(128_000, 126_977).outputTokens).toBe(0)
+  })
+
+  it("无效配置沿用默认容量；不足空间不强行分配最低输出额度", () => {
+    for (const context of [undefined, 0, NaN, Infinity, -1]) {
+      expect(computeRemainingOutputBudget(context, 0).maxCtx).toBe(204_800)
+    }
+    expect(computeRemainingOutputBudget(1_000, 500).outputTokens).toBe(0)
+  })
+})
 
 describe("computeContextBudget", () => {
   it("falls back to 204,800 chars when input is undefined / 0 / NaN", () => {

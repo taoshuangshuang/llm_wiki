@@ -1,0 +1,23 @@
+{
+  "seconds": 0.817,
+  "rawBytes": 180664,
+  "mode": "hybrid",
+  "results": [
+    {
+      "path": "wiki/constraints/imeta升级与二开适配限制.md",
+      "score": 0.01639344262295082
+    },
+    {
+      "path": "wiki/constraints/imeta 查询配置参数与能力边界.md",
+      "score": 0.016129032258064516
+    },
+    {
+      "path": "wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md",
+      "score": 0.015625
+    },
+    {
+      "path": "wiki/cases/升级迁移与安装类支持问题汇总.md",
+      "score": 0.015384615384615385
+    }
+  ]
+}

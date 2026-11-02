@@ -26,7 +26,6 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
         "raw/assets",
         "wiki/entities",
         "wiki/concepts",
-        "wiki/sources",
         "wiki/queries",
         "wiki/comparisons",
         "wiki/synthesis",
@@ -48,7 +47,6 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
 |------|-----------|---------|
 | entity | wiki/entities/ | Named things (models, companies, people, datasets) |
 | concept | wiki/concepts/ | Ideas, techniques, phenomena |
-| source | wiki/sources/ | Papers, articles, talks, blog posts |
 | query | wiki/queries/ | Open questions under investigation |
 | comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
 | synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
@@ -58,7 +56,6 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
 - Files: `kebab-case.md`
 - Entities: match official name where possible (e.g., `gpt-4.md`, `openai.md`)
 - Concepts: descriptive noun phrases (e.g., `chain-of-thought.md`)
-- Sources: `author-year-slug.md` (e.g., `wei-2022-chain-of-thought.md`)
 - Queries: question as slug (e.g., `does-scale-improve-reasoning.md`)
 
 ## Frontmatter
@@ -67,21 +64,13 @@ All pages must include YAML frontmatter:
 
 ```yaml
 ---
-type: entity | concept | source | query | comparison | synthesis | overview
+type: entity | concept | query | comparison | synthesis | overview
 title: Human-readable title
 tags: []
 related: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
-```
-
-Source pages also include:
-```yaml
-authors: []
-year: YYYY
-url: ""
-venue: ""
 ```
 
 ## Index Format
@@ -116,7 +105,7 @@ When sources contradict each other:
 4. Resolve in a synthesis page once sufficient evidence exists
 "#
     );
-    write_file_inner(root.join("schema.md"), &schema_content)?;
+    crate::project_schema::write_project_schema(&root, &schema_content)?;
 
     // purpose.md
     let purpose_content = r#"# Project Purpose

@@ -69,7 +69,6 @@ export type SearchProvider =
   | "bocha"
   | "firecrawl"
   | "none"
-export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
   | "google"
   | "google_news"
@@ -121,7 +120,6 @@ interface SearchApiConfig {
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
-  deepResearchSource?: DeepResearchSource
   anyTxt?: AnyTxtConfig
 }
 
@@ -268,8 +266,6 @@ export interface GeneralConfig {
 interface SourceWatchConfig {
   enabled: boolean
   autoIngest: boolean
-  /** 默认不生成来源摘要；需要文档导读时由项目显式开启。 */
-  generateSourceSummary?: boolean
   /** Keep extractor output in raw/parsed in addition to the internal cache. */
   persistExtractedMarkdown: boolean
   /** Maximum number of source text extraction jobs allowed at once. */
@@ -424,7 +420,7 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "skills" | "settings"
+  activeView: "chat" | "wiki" | "sources" | "imports" | "search" | "graph" | "lint" | "review" | "skills" | "settings" | "workflow"
   llmConfig: LlmConfig
   /** Persisted global/default config, kept separate while a project override is effective. */
   globalLlmConfig: LlmConfig
@@ -459,6 +455,8 @@ interface WikiState {
   closePreview: () => void
   setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
+  reviewRunFilter: string | null
+  reviewImportanceFilter: "important" | "optional"
   setActiveView: (view: WikiState["activeView"]) => void
   setLlmConfig: (config: LlmConfig) => void
   setGlobalLlmConfig: (config: LlmConfig) => void
@@ -494,6 +492,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   previewReturnView: null,
   pendingScrollImageSrc: null,
   activeView: "wiki",
+  reviewRunFilter: null,
+  reviewImportanceFilter: "important",
   llmConfig: {
     provider: "openai",
     apiKey: "",
@@ -583,7 +583,6 @@ export const useWikiStore = create<WikiState>((set) => ({
     searXngUrl: "",
     searXngCategories: ["general"],
     providerConfigs: {},
-    deepResearchSource: "web",
     anyTxt: {
       enabled: false,
       endpoint: "http://127.0.0.1:9920",

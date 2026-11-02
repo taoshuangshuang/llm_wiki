@@ -1,0 +1,213 @@
+{
+  "model": "qwen3.5:4b",
+  "results": [
+    {
+      "id": "same-condition-conflict",
+      "expected": "contradiction",
+      "foundExpected": false,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 9434,
+      "requests": 4,
+      "inputChars": 8621,
+      "issues": []
+    },
+    {
+      "id": "version-difference",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 6479,
+      "requests": 4,
+      "inputChars": 8620,
+      "issues": []
+    },
+    {
+      "id": "distinct-conditions",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 7284,
+      "requests": 4,
+      "inputChars": 8620,
+      "issues": []
+    },
+    {
+      "id": "omitted-detail",
+      "expected": "coverage",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [
+        "coverage"
+      ],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 4545,
+      "requests": 3,
+      "inputChars": 7180,
+      "issues": [
+        {
+          "type": "coverage",
+          "title": "页面遗漏了来源中关于超时时间和重试次数的关键信息。原文明确指出‘超时为 43 秒’且‘只重试一次’，但当前页面仅保留了并发上限为 17 的陈述，导致核心参数缺失。",
+          "description": "页面遗漏了来源中关于超时时间和重试次数的关键信息。原文明确指出‘超时为 43 秒’且‘只重试一次’，但当前页面仅保留了并发上限为 17 的陈述，导致核心参数缺失。",
+          "evidence": [
+            {
+              "id": "source",
+              "path": "raw/sources/facts.md",
+              "revision": "sha256:786252661e29c146dee3910c4bf6478980eb58cf0c7fd4e79ffca9f41276cf82",
+              "text": "珊瑚引擎 V7 在标准模式下并发上限为 17，超时为 43 秒；超时后只重试一次。",
+              "startLine": 1,
+              "endLine": 1,
+              "snapshot": {
+                "runId": "e47e8fc0-8e99-4de8-9781-1feeb64c1ebe",
+                "side": "source"
+              }
+            },
+            {
+              "id": "after-0",
+              "path": "wiki/concepts/facts.md",
+              "revision": "sha256:5b8f28220be924f59810a5bdfa89cf7f9af9478b1aa3b0cfcefcef4dbd7b1c82",
+              "text": "---\ntype: concept\ntitle: 观测事实\nsources: [facts.md]\n---\n# 观测事实\n\n珊瑚引擎 V7 在标准模式下并发上限为 17。\n",
+              "startLine": 1,
+              "endLine": 9,
+              "snapshot": {
+                "runId": "e47e8fc0-8e99-4de8-9781-1feeb64c1ebe",
+                "side": "after"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "existing-embedded-fact",
+      "expected": "无指定正例",
+      "foundExpected": true,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 2872,
+      "requests": 3,
+      "inputChars": 7713,
+      "issues": []
+    },
+    {
+      "id": "research-gap",
+      "expected": "suggestion",
+      "foundExpected": false,
+      "forbiddenFound": [],
+      "types": [],
+      "status": "complete",
+      "steps": {
+        "merge": {
+          "status": "complete"
+        },
+        "format": {
+          "status": "complete"
+        },
+        "content": {
+          "status": "complete"
+        },
+        "conflict": {
+          "status": "complete"
+        },
+        "knowledge": {
+          "status": "complete"
+        }
+      },
+      "elapsedMs": 2616,
+      "requests": 3,
+      "inputChars": 7283,
+      "issues": []
+    }
+  ]
+}

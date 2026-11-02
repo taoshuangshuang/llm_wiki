@@ -66,7 +66,7 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("ordinary story props")
     expect(prompt).toContain("unnamed or generic-role people")
     expect(prompt).toContain("Page-worthy: yes")
-    expect(prompt).toContain("reuse the exact title of an existing wiki page first")
+    expect(prompt).toContain("preserve the source spelling")
     expect(prompt).toContain("never invent or phonetically guess a name")
     expect(prompt).not.toContain("central vs. peripheral")
   })
@@ -80,9 +80,10 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("goal, habit")
   })
 
-  it("omits the schema section when no schema is provided", () => {
+  it("常规上下文为空时也保留模板标题，不再包裹判空条件", () => {
     const prompt = buildAnalysisPrompt("", "", "")
-    expect(prompt).not.toContain("## Project Schema")
+    expect(prompt).toContain("## Project Schema")
+    expect(prompt).not.toContain("{{#schema_context}}")
   })
 
   it("does not invent schema content not present in the source", () => {
@@ -133,42 +134,43 @@ describe("buildGenerationPrompt language directive", () => {
     useWikiStore.getState().setOutputLanguage("Chinese")
     const prompt = buildGenerationPrompt("", "", "", "source.pdf")
 
-    expect(prompt).toContain("Derive filenames from the page title in the mandatory output language")
-    expect(prompt).toContain("keep readable CJK characters in the filename")
+    expect(prompt).toContain("文件名依据输出语言下的标题生成")
+    expect(prompt).toContain("中文、日文和韩文保留原文字")
   })
 
   it("preserves technical proper nouns instead of translating them into the output language", () => {
     useWikiStore.getState().setOutputLanguage("Chinese")
     const prompt = buildGenerationPrompt("", "", "", "source.pdf")
 
-    expect(prompt).toContain("proper nouns and technical identifiers take precedence")
+    expect(prompt).toContain("专有名称、代码标识、技术术语")
     expect(prompt).toContain("GPT-5")
     expect(prompt).toContain("Transformer")
-    expect(prompt).toContain("standard original form")
-    expect(prompt).toContain("Do not put raw URLs, citation strings, or full paper titles directly into file paths")
-    expect(prompt).toContain("technical terms with no widely-used localized equivalent")
+    expect(prompt).toContain("规范原文")
+    expect(prompt).toContain("路径不直接使用 URL、引用字符串或完整论文标题")
+    // 完整语言规则只保留一处；专有名称和技术术语保留来源写法。
+    expect(prompt).toContain("来源已有的通行译名")
     expect(prompt).not.toContain("No exceptions — not even for page names")
   })
 
   it("tells generation to preserve subject and source boundaries", () => {
     const prompt = buildGenerationPrompt("", "", "", "source.pdf")
 
-    expect(prompt).toContain("Preserve subject boundaries")
-    expect(prompt).toContain("Do not merge or generalize a claim about one subject into another subject's page")
-    expect(prompt).toContain("cite which source/frontmatter `sources` entry supports that statement")
+    expect(prompt).toContain("论断、限制、评价和比较归属于来源明确描述的主题")
+    expect(prompt).toContain("不能仅因共享术语而混写事实")
+    expect(prompt).toContain("跨主题比较写清对象和来源")
   })
 
   it("requires standalone entity pages to establish identity without promoting incidental mentions", () => {
     const prompt = buildGenerationPrompt("", "", "", "source.pdf")
 
-    expect(prompt).toContain("only for a candidate explicitly marked `Page-worthy: yes`")
-    expect(prompt).toContain("wikilinks only when the target already exists")
-    expect(prompt).toContain("opening paragraph of every entity page must answer what the subject is")
-    expect(prompt).toContain("stable, high-confidence public knowledge")
-    expect(prompt).toContain("independently verifiable background in the mandatory output language")
-    expect(prompt).toContain("do not create the standalone page")
-    expect(prompt).toContain("reuse the exact title of an existing wiki page first")
-    expect(prompt).toContain("Final Global Digest is authoritative")
+    expect(prompt).toContain("独立实体页仅用于分析明确标记 `Page-worthy: yes`")
+    expect(prompt).toContain("本次相关新稿")
+    expect(prompt).toContain("实体或概念页先说明“是什么”")
+    expect(prompt).not.toContain("stable, high-confidence public knowledge")
+    expect(prompt).toContain("仅依据来源与项目规范组织新稿")
+    expect(prompt).toContain("来源无法确认身份时不为该主体单独成页")
+    expect(prompt).toContain("名称采用来源原始拼写")
+    expect(prompt).toContain("Final Global Digest / final_global_digest 中的成页判断为准")
   })
 
   it("defers long-source entity significance decisions to the global digest", () => {
@@ -193,10 +195,10 @@ describe("buildGenerationPrompt language directive", () => {
       "",
       "source.pdf",
     )
-    expect(prompt).toContain("## Project Schema and Routing (AUTHORITATIVE)")
-    expect(prompt).toContain("write pages into those schema-defined folders")
-    expect(prompt).toContain("frontmatter type must match the schema directory")
-    expect(prompt).toContain("otherwise use wiki/entities/")
+    expect(prompt).toContain("## 项目规范与页面分类")
+    expect(prompt).toContain("类型与目录优先采用 schema 的定义")
+    expect(prompt).toContain("frontmatter type 与 FILE 目录保持一致")
+    expect(prompt).toContain("实体使用 entity / wiki/entities/")
     expect(prompt).not.toContain("Entity pages in wiki/entities/ for key entities")
   })
 
@@ -245,8 +247,8 @@ describe("page merge prompt", () => {
   })
 })
 
-describe("review research query prompt", () => {
-  it("grounds ambiguous internal terms before generating web queries", () => {
+describe("旧审阅模板兼容与搜索词规则移除", () => {
+  it("旧审阅模板保留来源材料，不再注入搜索词生成规则", () => {
     const prompt = buildReviewSuggestionPrompt(
       "A private cognitive-analysis project",
       "- [[attention-filter]]",
@@ -257,14 +259,14 @@ describe("review research query prompt", () => {
       128_000,
     )
 
-    expect(prompt).toContain("project-local vocabulary")
-    expect(prompt).toContain("Never emit a bare ambiguous term as a web query")
-    expect(prompt).toContain("Do not substitute a popular public meaning")
-    expect(prompt).toContain("underlying real-world concepts or comparisons")
+    expect(prompt).not.toContain("project-local vocabulary")
+    expect(prompt).not.toContain("Never emit a bare ambiguous term as a web query")
+    expect(prompt).not.toContain("Do not substitute a popular public meaning")
+    expect(prompt).not.toContain("SEARCH:")
     expect(prompt).toContain("AF is the project's attention-filter signal")
   })
 
-  it("applies the same grounding rules to the main generation path", () => {
+  it("keeps formal reviews and web query generation out of the page generation path", () => {
     const prompt = buildGenerationPrompt(
       "A private cognitive-analysis project",
       "- [[attention-filter]]",
@@ -273,9 +275,9 @@ describe("review research query prompt", () => {
       "AF is the project's attention-filter signal.",
     )
 
-    expect(prompt).toContain("project-local vocabulary")
-    expect(prompt).toContain("Never emit a bare ambiguous term as a web query")
-    expect(prompt).toContain("Do not substitute a popular public meaning")
+    expect(prompt).toContain("本阶段只输出完整 FILE 块")
+    expect(prompt).not.toContain("OPTIONS: Create Page")
+    expect(prompt).not.toContain("SEARCH:")
   })
 })
 

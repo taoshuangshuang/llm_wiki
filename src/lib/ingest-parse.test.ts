@@ -25,7 +25,6 @@ import {
   stampGeneratedLogDate,
   buildAnalysisPrompt,
   buildGenerationPrompt,
-  sourceSummaryMediaRefsForExternalMarkdown,
   buildDeterministicIngestLog,
   rewriteIngestPathFromTitleForTargetLanguage,
   canonicalizeSourcesField,
@@ -152,24 +151,6 @@ describe("parseFileBlocks — canonical shapes", () => {
       "---END FILE---",
     ].join("\n")
     expect(parseFileBlocks(text).blocks).toHaveLength(1)
-  })
-})
-
-describe("source summary media refs", () => {
-  it("rewrites generated media refs so wiki/sources pages work in external Markdown apps", () => {
-    const input = [
-      "![Chart](media/report/001-chart.png)",
-      "![Table](./media/report/table%201.png)",
-      '<img src="media/report/raw.png" />',
-      "![Already relative](../media/report/keep.png)",
-    ].join("\n")
-
-    expect(sourceSummaryMediaRefsForExternalMarkdown(input)).toBe([
-      "![Chart](../media/report/001-chart.png)",
-      "![Table](../media/report/table%201.png)",
-      '<img src="../media/report/raw.png" />',
-      "![Already relative](../media/report/keep.png)",
-    ].join("\n"))
   })
 })
 

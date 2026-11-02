@@ -4,6 +4,7 @@ import { fileExists, readFile, writeFile } from "@/commands/fs"
 import { parseWikiSchemaRouting, type WikiSchemaRouting } from "@/lib/wiki-schema"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
+import { loadProjectSchema } from "@/lib/project-schema"
 
 export type ReviewPageType = "entity" | "concept" | "comparison" | "synthesis" | "query"
 
@@ -121,8 +122,10 @@ export async function planReviewPages(
 ): Promise<ReviewPageDraft[]> {
   const schemaPath = `${projectPath.replace(/\/+$/, "")}/schema.md`
   // 项目不存在 schema 时才保留旧项目默认行为；读取失败不能静默绕过约束。
-  if (!(await fileExists(schemaPath))) return createReviewPageDrafts(item, action)
-  const schema = await readFile(schemaPath)
+  if (!(await fileExists(schemaPath)) && !(await fileExists(`${projectPath.replace(/\/+$/, "")}/wiki/schema.md`))) {
+    return createReviewPageDrafts(item, action)
+  }
+  const schema = await loadProjectSchema(projectPath, "analysis")
   const routing = parseWikiSchemaRouting(schema)
   const types = Object.keys(routing.typeDirs).filter((type) => type !== "source")
   if (!types.length) throw new Error("schema 的 Page Types 中没有可用于创建页面的内容类型。")

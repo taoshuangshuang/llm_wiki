@@ -347,7 +347,8 @@ export async function sweepResolvedReviews(
   if (!matchesCurrentProject(projectPath)) return 0
 
   const store = useReviewStore.getState()
-  const pending = store.items.filter((i) => !i.resolved)
+  // 新事项必须按正文证据版本复核，旧文件名／标题清理不能替它确认已解决。
+  const pending = store.items.filter((i) => !i.resolved && i.schemaVersion !== 2)
 
   if (pending.length === 0) return 0
 

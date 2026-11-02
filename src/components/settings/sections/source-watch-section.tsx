@@ -12,6 +12,7 @@ interface Props {
   draft: SettingsDraft
   setDraft: DraftSetter
   projectReady: boolean
+  part?: "monitoring" | "filters" | "processing"
 }
 
 function updateListValue(value: string): string[] {
@@ -25,7 +26,7 @@ function joinList(values: readonly string[]): string {
   return values.join(", ")
 }
 
-export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
+export function SourceWatchSection({ draft, setDraft, projectReady, part }: Props) {
   const { t } = useTranslation()
   const config = normalizeSourceWatchConfig(draft.sourceWatchConfig)
   const selected = useMemo(() => new Set(config.includeExtensions), [config.includeExtensions])
@@ -72,6 +73,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
 
   return (
     <div className="space-y-6">
+      {!part && <>
       <div>
         <h2 className="text-xl font-semibold">
           {t("settings.sections.sourceWatch.title", { defaultValue: "Source Folder Auto Watch" })}
@@ -84,7 +86,10 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
         </p>
       </div>
 
+      </>}
+      {part !== "filters" && <>
       <div className="space-y-4 rounded-lg border border-border/60 bg-muted/20 p-4">
+        {(!part || part === "monitoring") && <>
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -106,7 +111,9 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             </p>
           </div>
         </label>
+        </>}
 
+        {(!part || part === "monitoring") && <>
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -128,7 +135,9 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             </p>
           </div>
         </label>
+        </>}
 
+        {(!part || part === "processing") && <>
         <label className="block space-y-1.5">
           <span className="text-sm font-semibold">
             {t("settings.sections.sourceWatch.parsingConcurrency", {
@@ -151,30 +160,33 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             })}
           </p>
         </label>
+        </>}
 
+        {(!part || part === "processing") && <>
         <label className="block space-y-1.5">
           <span className="text-sm font-semibold">
-            {t("settings.sections.sourceWatch.ingestConcurrency", {
-              defaultValue: "Concurrent ingest tasks",
+            {t("settings.sections.sourceWatch.serialIngestCount", {
+              defaultValue: "Sequential ingest tasks",
             })}
           </span>
           <input
             type="number"
             min={1}
-            max={MAX_USER_CONCURRENCY}
-            value={config.ingestConcurrency}
-            onChange={(event) => updateConfig({ ingestConcurrency: Number(event.target.value) || 1 })}
-            disabled={!projectReady}
+            max={1}
+            value={1}
+            disabled
             className="w-24 rounded-md border border-input bg-background px-2 py-1 text-sm"
           />
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t("settings.sections.sourceWatch.ingestConcurrencyDescription", {
+            {t("settings.sections.sourceWatch.serialIngestDescription", {
               defaultValue:
-                "Prepare this many sources in parallel. Wiki writes remain ordered. Higher values use more LLM capacity and memory.",
+                "Sources, chunks and review batches run sequentially. The next chunk starts after the current review attempt ends.",
             })}
           </p>
         </label>
+        </>}
 
+        {(!part || part === "processing") && <>
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -197,25 +209,15 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             </p>
           </div>
         </label>
+        </>}
 
-        <label className="flex items-start gap-3">
-          <input type="checkbox" checked={config.generateSourceSummary === true}
-            onChange={(event) => updateConfig({ generateSourceSummary: event.target.checked })}
-            disabled={!projectReady} className="mt-1 h-4 w-4" />
-          <div className="space-y-1">
-            <span className="text-sm font-semibold">{t("settings.sections.sourceWatch.generateSourceSummary", { defaultValue: "Generate source summaries" })}</span>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t("settings.sections.sourceWatch.generateSourceSummaryDescription", {
-              defaultValue: "Optional document overview pages. Disabled by default; sources on knowledge pages still link to original documents. Existing summaries are kept.",
-            })}</p>
-          </div>
-        </label>
-
+        {(!part || part === "monitoring") && <>
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
             checked={config.autoIngest}
             onChange={(event) => updateConfig({ autoIngest: event.target.checked })}
-            disabled={!projectReady || !config.enabled}
+            disabled={!projectReady}
             className="mt-1 h-4 w-4"
           />
           <div className="space-y-1">
@@ -230,6 +232,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             </p>
           </div>
         </label>
+        </>}
 
         {!projectReady && (
           <p className="text-xs text-muted-foreground">
@@ -240,6 +243,8 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
         )}
       </div>
 
+      </>}
+      {(!part || part === "filters") && <>
       <div className="space-y-4 rounded-lg border border-border/60 bg-muted/20 p-4">
         <div>
           <h3 className="text-sm font-semibold">
@@ -269,7 +274,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
                       type="checkbox"
                       checked={selected.has(ext)}
                       onChange={(event) => toggleExtension(ext, event.target.checked)}
-                      disabled={!projectReady || !config.enabled}
+                      disabled={!projectReady}
                       className="h-3.5 w-3.5"
                     />
                     <span>.{ext}</span>
@@ -299,7 +304,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             max={4096}
             value={config.maxFileSizeMb}
             onChange={(event) => updateConfig({ maxFileSizeMb: Number(event.target.value) || 1 })}
-            disabled={!projectReady || !config.enabled}
+            disabled={!projectReady}
             className="w-32 rounded-md border border-input bg-background px-2 py-1 text-sm"
           />
         </label>
@@ -319,7 +324,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             placeholder={t("settings.sections.sourceWatch.excludeDirsPlaceholder", {
               defaultValue: ".git, node_modules, drafts, subdir/drafts",
             })}
-            disabled={!projectReady || !config.enabled}
+            disabled={!projectReady}
             rows={2}
             className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
           />
@@ -345,7 +350,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             placeholder={t("settings.sections.sourceWatch.excludeExtensionsPlaceholder", {
               defaultValue: "tmp, bak, exe, dll, iso, dmg",
             })}
-            disabled={!projectReady || !config.enabled}
+            disabled={!projectReady}
             rows={2}
             className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
           />
@@ -368,7 +373,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
               updateConfig({ excludeGlobs: updateListValue(event.target.value) })
             }}
             onBlur={() => finishListEdit("globs", excludeGlobsText)}
-            disabled={!projectReady || !config.enabled}
+            disabled={!projectReady}
             rows={2}
             className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
           />
@@ -379,6 +384,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
           </p>
         </label>
       </div>
+      </>}
     </div>
   )
 }

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { readFile, writeFile } from "@/commands/fs"
+import { fileExists, readFile, writeFile } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { createModuleTagWriter, refreshCachedModuleTags } from "./classification"
 
-vi.mock("@/commands/fs", () => ({ readFile: vi.fn(), writeFile: vi.fn() }))
+vi.mock("@/commands/fs", () => ({ readFile: vi.fn(), writeFile: vi.fn(), fileExists: vi.fn(async () => true) }))
 vi.mock("@/lib/llm-client", () => ({ streamChat: vi.fn() }))
 const schema = '## Business Modules\n```json\n{"version":1,"modules":[{"id":"query","name":"查询","description":"查询知识"}]}\n```'
 const config = { provider: "openai", model: "test" } as LlmConfig
@@ -13,6 +13,7 @@ const content = "---\ntitle: A\ntags: [SQL, module/old]\n---\n旧来源保留知
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(fileExists).mockImplementation(async (path) => !path.endsWith("/business-modules.md") && !path.endsWith("/page-rules.md"))
   vi.mocked(readFile).mockResolvedValue(schema)
   vi.mocked(writeFile).mockResolvedValue(undefined)
   vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
@@ -22,6 +23,25 @@ beforeEach(() => {
 })
 
 describe("最终写入前的模块分类", () => {
+  it("独立字典优先于旧 schema，分类输入不带页面写作规范", async () => {
+    vi.mocked(fileExists).mockResolvedValue(true)
+    vi.mocked(readFile).mockImplementation(async (path) => path.endsWith("business-modules.md")
+      ? schema : "## Frontmatter\nUNRELATED_PAGE_RULE")
+    const result = await (await createModuleTagWriter("/p", config))(content)
+    expect(parseFrontmatter(result.content).frontmatter?.tags).toContain("module/query")
+    expect(readFile).not.toHaveBeenCalledWith("/p/schema.md")
+    expect(vi.mocked(streamChat).mock.calls[0][1][0].content).not.toContain("UNRELATED_PAGE_RULE")
+  })
+
+  it("独立字典非空但缺少章节时报告配置错误，不静默关闭分类", async () => {
+    vi.mocked(fileExists).mockResolvedValue(true)
+    vi.mocked(readFile).mockResolvedValue("malformed module configuration")
+    const result = await (await createModuleTagWriter("/p", config))(content)
+    expect(result.warnings[0]).toContain("配置无效")
+    expect(parseFrontmatter(result.content).frontmatter?.tags).toContain("module/unclassified")
+    expect(streamChat).not.toHaveBeenCalled()
+  })
+
   it("分类完整最终正文，不把历史模块标签作为分类依据", async () => {
     const classify = await createModuleTagWriter("/p", config)
     const result = await classify(content)

@@ -12,7 +12,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { createHash } from "node:crypto"
 import type { FileNode } from "@/types/wiki"
+import { normalizeReviewItems, type ReviewItem } from "@/stores/review-store"
 
 async function buildTree(dir: string): Promise<FileNode[]> {
   let entries
@@ -49,12 +51,52 @@ async function buildTree(dir: string): Promise<FileNode[]> {
  * Import this from a test file that calls `vi.mock("@/commands/fs", ...)`.
  */
 export const realFs = {
+  appendIngestLog: async (projectPath: string, sourceIdentity: string, entry: unknown): Promise<void> => {
+    const target = `${projectPath}/.llm-wiki/ingest-logs/${createHash("sha256").update(sourceIdentity).digest("hex")}.jsonl`
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.appendFile(target, JSON.stringify(entry) + "\n", "utf-8")
+  },
+  readIngestLog: async (projectPath: string, sourceIdentity: string): Promise<string> => {
+    const target = `${projectPath}/.llm-wiki/ingest-logs/${createHash("sha256").update(sourceIdentity).digest("hex")}.jsonl`
+    return fs.readFile(target, "utf-8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return ""
+      throw error
+    })
+  },
   readFile: async (p: string): Promise<string> => {
     return fs.readFile(p, "utf-8")
   },
   writeFile: async (p: string, contents: string): Promise<void> => {
     await fs.mkdir(path.dirname(p), { recursive: true })
     await fs.writeFile(p, contents, "utf-8")
+  },
+  writeFileAtomic: async (p: string, contents: string): Promise<void> => {
+    await fs.mkdir(path.dirname(p), { recursive: true })
+    const temporary = `${p}.${crypto.randomUUID()}.tmp`
+    await fs.writeFile(temporary, contents, "utf-8")
+    await fs.rename(temporary, p)
+  },
+  saveWorkflowFile: async (projectPath: string, relativePath: string, expected: string | null, contents: string): Promise<void> => {
+    await realFs.compareAndWriteFile(projectPath, relativePath, expected, contents)
+  },
+  compareAndWriteFile: async (projectPath: string, relativePath: string, expected: string | null, contents: string): Promise<void> => {
+    const target = `${projectPath}/${relativePath}`
+    const current = await fs.readFile(target, "utf-8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null
+      throw error
+    })
+    if (current !== expected) throw new Error("INGEST_VERSION_CONFLICT: 页面已变化")
+    await realFs.writeFileAtomic(target, contents)
+  },
+  mergeReviewItems: async (projectPath: string, items: ReviewItem[]): Promise<ReviewItem[]> => {
+    const target = `${projectPath}/.llm-wiki/review.json`
+    const existing = await fs.readFile(target, "utf-8").then((raw) => JSON.parse(raw) as ReviewItem[]).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return []
+      throw error
+    })
+    const result = normalizeReviewItems([...existing, ...items])
+    await realFs.writeFileAtomic(target, JSON.stringify(result, null, 2))
+    return result
   },
   listDirectory: async (p: string): Promise<FileNode[]> => {
     return buildTree(p)
@@ -81,6 +123,7 @@ export const realFs = {
   getFileSize: async (p: string): Promise<number> => {
     return (await fs.stat(p)).size
   },
+  getFileMd5: async (p: string): Promise<string> => createHash("md5").update(await fs.readFile(p)).digest("hex"),
   findRelatedWikiPages: async (): Promise<string[]> => {
     return []
   },

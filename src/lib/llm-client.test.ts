@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { getEventListeners } from "node:events"
 
 // Stub getHttpFetch so streamChat hits our in-test responder; keep the
 // rest of tauri-fetch (notably isFetchNetworkError) real so the existing
@@ -102,8 +103,63 @@ function openAiSseToken(content: string): string {
   return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`
 }
 
+describe("连续审阅请求的取消资源释放", () => {
+  afterEach(() => vi.useRealTimers())
+
+  it.each(["success", "fetch-error", "http-error"])("同一取消信号连续执行 16 次 %s 后，不残留监听或超时器", async (mode) => {
+    vi.useFakeTimers()
+    mockHttpFetch.mockReset()
+    mockHttpFetch.mockImplementation(async () => {
+      if (mode === "fetch-error") throw new TypeError("Failed to fetch")
+      return new Response(JSON.stringify(mode === "http-error" ? { error: "unavailable" } : { choices: [{ message: { content: "完成" } }] }), { status: mode === "http-error" ? 503 : 200, headers: { "Content-Type": "application/json" } })
+    })
+    const controller = new AbortController()
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    for (let index = 0; index < 16; index++) {
+      await streamChat({ ...cfg, streamingEnabled: false }, [{ role: "user", content: "检查事实。" }], callbacks, controller.signal)
+      expect(getEventListeners(controller.signal, "abort")).toHaveLength(0)
+      expect(vi.getTimerCount()).toBe(0)
+    }
+    expect(mockHttpFetch).toHaveBeenCalledTimes(16)
+    if (mode === "success") expect(callbacks.onDone).toHaveBeenCalledTimes(16)
+    else expect(callbacks.onError).toHaveBeenCalledTimes(16)
+  })
+})
+
 describe("streamChat — buffered streaming responses", () => {
   beforeEach(() => mockHttpFetch.mockReset())
+
+  it.each(["complete", "endpoint-error", "transport-error"])("私有响应流在 %s 后结束请求，不进入 WebKit 的读锁释放死锁路径", async (mode) => {
+    // 真实桌面采样显示 releaseLock 持有 reader 锁时触发 GC，GC 线程又等待同一锁。
+    // Node 无法重现 WebKit 的线程互锁；这里用失败哨兵确保生产传输不再进入该路径。
+    const release = vi.spyOn(ReadableStreamDefaultReader.prototype, "releaseLock")
+      .mockImplementation(() => { throw new Error("WebKit releaseLock/GC deadlock sentinel") })
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (mode === "transport-error") controller.error(new TypeError("Load failed"))
+        else {
+          controller.enqueue(new TextEncoder().encode(mode === "complete"
+            ? `${openAiSseToken("完成")}\n\ndata: [DONE]\n\n`
+            : 'data: {"error":{"message":"stream failed"}}\n\n'))
+          if (mode === "complete") controller.close()
+        }
+      },
+      cancel() { cancelled = true },
+    })
+    mockHttpFetch.mockResolvedValue(new Response(body, { status: 200 }))
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    try {
+      await expect(streamChat(customStreamingCfg, [{ role: "user", content: "检查事实" }], callbacks))
+        .resolves.toBeUndefined()
+      expect(release).not.toHaveBeenCalled()
+      expect(callbacks.onDone).toHaveBeenCalledTimes(mode === "complete" ? 1 : 0)
+      expect(callbacks.onError).toHaveBeenCalledTimes(mode === "complete" ? 0 : 1)
+      if (mode === "endpoint-error") expect(cancelled).toBe(true)
+    } finally {
+      release.mockRestore()
+    }
+  })
 
   it("surfaces a JSON endpoint error returned inside HTTP 200", async () => {
     mockHttpFetch.mockResolvedValue(new Response(JSON.stringify({

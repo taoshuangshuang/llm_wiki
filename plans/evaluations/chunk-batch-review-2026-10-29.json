@@ -1,0 +1,1357 @@
+{
+  "model": "qwen3.5:4b",
+  "elapsedMs": 28991,
+  "status": "complete",
+  "steps": {
+    "merge": {
+      "status": "complete"
+    },
+    "format": {
+      "status": "complete"
+    },
+    "content": {
+      "status": "complete"
+    },
+    "conflict": {
+      "status": "complete"
+    },
+    "knowledge": {
+      "status": "complete"
+    }
+  },
+  "statistics": {
+    "requests": 13,
+    "inputChars": 89202,
+    "outputChars": 466,
+    "failedRequests": 0,
+    "elapsedMs": 28955
+  },
+  "batches": [
+    {
+      "batchId": "5b956901b86e7069b64797c18cbbf34cf30a565835bacc535e982666db8fbdec",
+      "index": 1,
+      "pageRefs": [
+        {
+          "path": "wiki/concepts/protocol-00.md",
+          "revision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+          "targetId": "page-0"
+        },
+        {
+          "path": "wiki/concepts/protocol-01.md",
+          "revision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+          "targetId": "page-1"
+        },
+        {
+          "path": "wiki/concepts/protocol-02.md",
+          "revision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+          "targetId": "page-2"
+        },
+        {
+          "path": "wiki/concepts/protocol-03.md",
+          "revision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+          "targetId": "page-3"
+        },
+        {
+          "path": "wiki/concepts/protocol-04.md",
+          "revision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+          "targetId": "page-4"
+        },
+        {
+          "path": "wiki/concepts/protocol-05.md",
+          "revision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+          "targetId": "page-5"
+        },
+        {
+          "path": "wiki/concepts/protocol-06.md",
+          "revision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+          "targetId": "page-6"
+        },
+        {
+          "path": "wiki/concepts/protocol-07.md",
+          "revision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+          "targetId": "page-7"
+        },
+        {
+          "path": "wiki/concepts/protocol-08.md",
+          "revision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+          "targetId": "page-8"
+        },
+        {
+          "path": "wiki/concepts/protocol-09.md",
+          "revision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+          "targetId": "page-9"
+        }
+      ],
+      "status": "complete",
+      "checks": {
+        "existing-conflict": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-00.md",
+              "revision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-01.md",
+              "revision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-02.md",
+              "revision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-03.md",
+              "revision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-04.md",
+              "revision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-05.md",
+              "revision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-06.md",
+              "revision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-07.md",
+              "revision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-08.md",
+              "revision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-09.md",
+              "revision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "duplicate": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-00.md",
+              "revision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-01.md",
+              "revision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-02.md",
+              "revision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-03.md",
+              "revision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-04.md",
+              "revision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-05.md",
+              "revision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-06.md",
+              "revision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-07.md",
+              "revision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-08.md",
+              "revision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-09.md",
+              "revision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "missing-page": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-00.md",
+              "revision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-01.md",
+              "revision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-02.md",
+              "revision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-03.md",
+              "revision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-04.md",
+              "revision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-05.md",
+              "revision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-06.md",
+              "revision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-07.md",
+              "revision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-08.md",
+              "revision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-09.md",
+              "revision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "suggestion": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-00.md",
+              "revision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-01.md",
+              "revision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-02.md",
+              "revision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-03.md",
+              "revision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-04.md",
+              "revision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-05.md",
+              "revision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-06.md",
+              "revision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-07.md",
+              "revision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-08.md",
+              "revision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "startLine": 1,
+              "endLine": 8
+            },
+            {
+              "path": "wiki/concepts/protocol-09.md",
+              "revision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        }
+      },
+      "attempts": 1,
+      "elapsedMs": 17119,
+      "statistics": {
+        "requests": 4,
+        "inputChars": 53203,
+        "outputChars": 120,
+        "failedRequests": 0
+      },
+      "retrieval": {
+        "evidence": [],
+        "execution": {
+          "budgetReached": [],
+          "channelResults": [
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "status": "completed",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "status": "completed",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "status": "disabled",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:cbe817af806a1e72a4733e48806f1d9a34923d51fd1007fd9dd63d8a3550aefd",
+              "status": "disabled",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "status": "completed",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "status": "completed",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "status": "disabled",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:4235d2f834d068b16173c085c46fa0b59ed42cf97ad3c0a736808e3d9be44dfb",
+              "status": "disabled",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "status": "completed",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "status": "completed",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "status": "disabled",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:0aa3215c60872c61fcfaeb2632640e3b179ad6cff81486b2e667d0a8f8caaae5",
+              "status": "disabled",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "status": "completed",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "status": "completed",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "status": "disabled",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:288448354e060d542ffb40ab9a6048164433267cb982b57b4c72429d719e9a9e",
+              "status": "disabled",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "status": "completed",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "status": "completed",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "status": "disabled",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:dd73a1f82e1ff5a28772f9f1061a88d67447de60e21c1c9414ed912b595e8616",
+              "status": "disabled",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "status": "completed",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "status": "completed",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "status": "disabled",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:2cf6a6e5e62e00341f706c7375ee35a12b840e9db361849d581ca1e1423e6751",
+              "status": "disabled",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "status": "completed",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "status": "completed",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "status": "disabled",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:0610faae64c82440636e895392a42adce677571026ca5dd74b42b6db75894618",
+              "status": "disabled",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "status": "completed",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "status": "completed",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "status": "disabled",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:d2a97a556b18864868305521d1323d26eba96dcff3fa99523823dec57b64f4c8",
+              "status": "disabled",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "status": "completed",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "status": "completed",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "status": "disabled",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:7459b15dc27dad82bf482bc0de906114f606fb8a29d69450ac56a2352707958f",
+              "status": "disabled",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "status": "completed",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "status": "completed",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "status": "disabled",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:b307d48aaa8e7a68077bc21432eab5cfcd2adf51d3e340c70db6c706c1f95cee",
+              "status": "disabled",
+              "targetId": "page-9"
+            }
+          ],
+          "channelStates": [
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 7,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 1,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-0"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-1"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-2"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-3"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-4"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-5"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-6"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-7"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-8"
+            },
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-9"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-9"
+            }
+          ],
+          "configVersion": "sha256:c814e50620e27310a411b7e5cb8772293942f4015619195d13ea063075d01bcc",
+          "corpusVersion": "sha256:6429666cf200094de66f8a4bc235b8f4ad40c1749e61067c11f05b4735acb38d",
+          "elapsedMs": 42,
+          "queries": [
+            {
+              "id": "query-page-0",
+              "targetId": "page-0",
+              "text": "---\ntype: concept\ntitle: 试验协议 P1\nsources: [facts.md]\n---\n# 试验协议 P1\n试验协议 P1 的校验宽度为 17 位。\n"
+            },
+            {
+              "id": "query-page-1",
+              "targetId": "page-1",
+              "text": "---\ntype: concept\ntitle: 试验协议 P2\nsources: [facts.md]\n---\n# 试验协议 P2\n试验协议 P2 的校验宽度为 18 位。\n"
+            },
+            {
+              "id": "query-page-2",
+              "targetId": "page-2",
+              "text": "---\ntype: concept\ntitle: 试验协议 P3\nsources: [facts.md]\n---\n# 试验协议 P3\n试验协议 P3 的校验宽度为 19 位。\n"
+            },
+            {
+              "id": "query-page-3",
+              "targetId": "page-3",
+              "text": "---\ntype: concept\ntitle: 试验协议 P4\nsources: [facts.md]\n---\n# 试验协议 P4\n试验协议 P4 的校验宽度为 20 位。\n"
+            },
+            {
+              "id": "query-page-4",
+              "targetId": "page-4",
+              "text": "---\ntype: concept\ntitle: 试验协议 P5\nsources: [facts.md]\n---\n# 试验协议 P5\n试验协议 P5 的校验宽度为 21 位。\n"
+            },
+            {
+              "id": "query-page-5",
+              "targetId": "page-5",
+              "text": "---\ntype: concept\ntitle: 试验协议 P6\nsources: [facts.md]\n---\n# 试验协议 P6\n试验协议 P6 的校验宽度为 22 位。\n"
+            },
+            {
+              "id": "query-page-6",
+              "targetId": "page-6",
+              "text": "---\ntype: concept\ntitle: 试验协议 P7\nsources: [facts.md]\n---\n# 试验协议 P7\n试验协议 P7 的校验宽度为 23 位。\n"
+            },
+            {
+              "id": "query-page-7",
+              "targetId": "page-7",
+              "text": "---\ntype: concept\ntitle: 试验协议 P8\nsources: [facts.md]\n---\n# 试验协议 P8\n试验协议 P8 的校验宽度为 24 位。\n"
+            },
+            {
+              "id": "query-page-8",
+              "targetId": "page-8",
+              "text": "---\ntype: concept\ntitle: 试验协议 P9\nsources: [facts.md]\n---\n# 试验协议 P9\n试验协议 P9 的校验宽度为 25 位。\n"
+            },
+            {
+              "id": "query-page-9",
+              "targetId": "page-9",
+              "text": "---\ntype: concept\ntitle: 试验协议 P10\nsources: [facts.md]\n---\n# 试验协议 P10\n试验协议 P10 的校验宽度为 26 位。\n"
+            }
+          ],
+          "usage": {
+            "candidates": 0,
+            "contextChars": 0,
+            "queries": 10,
+            "readChars": 974
+          },
+          "warnings": []
+        },
+        "relations": [],
+        "status": "completed",
+        "targetResults": [
+          {
+            "elapsedMs": 11,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-0",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-1",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-2",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-3",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-4",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-5",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-6",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-7",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-8",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          },
+          {
+            "elapsedMs": 0,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-9",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          }
+        ]
+      },
+      "dependency": "sha256:874f2fc23db551e4847758396ff3d94ae343145e17f15a372d582d2492d1fdda"
+    },
+    {
+      "batchId": "d42227296bf3ab156d15a2a3dd8a68aac1661a2ecb783dc1409d228b45175d6e",
+      "index": 2,
+      "pageRefs": [
+        {
+          "path": "wiki/concepts/protocol-10.md",
+          "revision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+          "targetId": "page-10"
+        }
+      ],
+      "status": "complete",
+      "checks": {
+        "existing-conflict": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-10.md",
+              "revision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "duplicate": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-10.md",
+              "revision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "missing-page": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-10.md",
+              "revision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        },
+        "suggestion": {
+          "status": "complete",
+          "items": [],
+          "materialRefs": [
+            {
+              "path": "wiki/concepts/protocol-10.md",
+              "revision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "startLine": 1,
+              "endLine": 8
+            }
+          ]
+        }
+      },
+      "attempts": 1,
+      "elapsedMs": 3981,
+      "statistics": {
+        "requests": 4,
+        "inputChars": 12659,
+        "outputChars": 120,
+        "failedRequests": 0
+      },
+      "retrieval": {
+        "evidence": [],
+        "execution": {
+          "budgetReached": [],
+          "channelResults": [
+            {
+              "candidates": [],
+              "channel": "keyword",
+              "queryRevision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "status": "completed",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": [],
+              "channel": "indexPage",
+              "queryRevision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "status": "completed",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": [],
+              "channel": "vector",
+              "queryRevision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "status": "disabled",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": [],
+              "channel": "graph",
+              "queryRevision": "sha256:512b4d7563821ce5edbd4c7dfb3e6e78e729fd608f01baabb685a4ed950b2668",
+              "status": "disabled",
+              "targetId": "page-10"
+            }
+          ],
+          "channelStates": [
+            {
+              "candidates": 0,
+              "channel": "keyword",
+              "elapsedMs": 8,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": 0,
+              "channel": "indexPage",
+              "elapsedMs": 1,
+              "reason": null,
+              "reused": false,
+              "status": "completed",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": 0,
+              "channel": "vector",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-10"
+            },
+            {
+              "candidates": 0,
+              "channel": "graph",
+              "elapsedMs": 0,
+              "reason": null,
+              "reused": false,
+              "status": "disabled",
+              "targetId": "page-10"
+            }
+          ],
+          "configVersion": "sha256:c814e50620e27310a411b7e5cb8772293942f4015619195d13ea063075d01bcc",
+          "corpusVersion": "sha256:6429666cf200094de66f8a4bc235b8f4ad40c1749e61067c11f05b4735acb38d",
+          "elapsedMs": 40,
+          "queries": [
+            {
+              "id": "query-page-10",
+              "targetId": "page-10",
+              "text": "---\ntype: concept\ntitle: 试验协议 P11\nsources: [facts.md]\n---\n# 试验协议 P11\n试验协议 P11 的校验宽度为 27 位。\n"
+            }
+          ],
+          "usage": {
+            "candidates": 0,
+            "contextChars": 0,
+            "queries": 1,
+            "readChars": 974
+          },
+          "warnings": []
+        },
+        "relations": [],
+        "status": "completed",
+        "targetResults": [
+          {
+            "elapsedMs": 10,
+            "evidenceIds": [],
+            "status": "no_match",
+            "targetId": "page-10",
+            "usage": {
+              "candidates": 0,
+              "contextChars": 0
+            }
+          }
+        ]
+      },
+      "dependency": "sha256:874f2fc23db551e4847758396ff3d94ae343145e17f15a372d582d2492d1fdda"
+    }
+  ],
+  "items": [],
+  "limitation": "合成短文与关键词／索引通道评估；不代表长文、向量服务或真实资料在 60 秒内必定完成。"
+}

@@ -12,16 +12,19 @@ import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useActivityStore } from "@/stores/activity-store"
-import { useResearchStore } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewChatStore } from "@/stores/review-chat-store"
 
 export async function resetProjectState(): Promise<void> {
+  const { pauseIngestReviewQueue } = await import("./ingest-review-queue")
+  await pauseIngestReviewQueue()
   useReviewChatStore.getState().close()
   // Zustand stores — clear all per-project data (synchronous)
   const globalLlmConfig = useWikiStore.getState().globalLlmConfig
   useWikiStore.setState({
     llmConfig: globalLlmConfig,
+    reviewRunFilter: null,
+    reviewImportanceFilter: "important",
     projectLlmOverride: { enabled: false, presetId: null, model: "", profile: undefined },
   })
   useChatStore.setState({
@@ -51,11 +54,6 @@ export async function resetProjectState(): Promise<void> {
 
   useActivityStore.setState({
     items: [],
-  })
-
-  useResearchStore.setState({
-    tasks: [],
-    panelOpen: false,
   })
 
   // Module-level caches — load in parallel and clear each, surfacing any

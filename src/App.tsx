@@ -5,14 +5,15 @@ import { disable as disableAutostart, enable as enableAutostart, isEnabled as is
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
-import { useLintStore } from "@/stores/lint-store"
+import { restoreLintRun } from "@/lib/lint-runner"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
-import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadHistoryMessageLimit } from "@/lib/project-store"
+import { loadReviewItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { startConversationIngestWatcher } from "@/lib/conversation-ingest"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
 import { useGlobalShortcut } from "@/hooks/use-global-shortcut"
 import { AppLayout } from "@/components/layout/app-layout"
@@ -28,6 +29,21 @@ function applyDocumentZoom(level: number) {
 function App() {
   const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
+  const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
+
+  // 独立于来源自动入库：任何 Wiki 写入都由原生监听和启动/定时核对追平索引。
+  useEffect(() => {
+    if (!project) return
+    let disposed = false
+    let stop: (() => void) | undefined
+    import("@/lib/wiki-index-sync").then(({ startWikiIndexSync }) =>
+      startWikiIndexSync(project.path, embeddingConfig),
+    ).then((cleanup) => {
+      if (disposed) cleanup()
+      else stop = cleanup
+    }).catch((error) => console.error("Failed to start wiki index sync:", error))
+    return () => { disposed = true; stop?.() }
+  }, [project?.path, embeddingConfig])
   const setProject = useWikiStore((s) => s.setProject)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -86,10 +102,7 @@ function App() {
     }
 
     try {
-      const savedLint = await loadLintItems(proj.path)
-      if (savedLint.length > 0 && isCurrentProject(proj)) {
-        useLintStore.getState().setItems(savedLint)
-      }
+      await restoreLintRun(proj.path, { restoreItems: true })
     } catch (err) {
       console.warn("[startup] failed to load lint items:", err)
     }
@@ -141,6 +154,7 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+    return startConversationIngestWatcher()
   }, [])
 
   // Register global keyboard shortcuts
@@ -434,7 +448,7 @@ function App() {
     // Flush the OUTGOING project's review/lint/chat state to disk and suspend
     // auto-save before reset empties the stores — otherwise the debounced
     // writers would persist empty arrays back over the old project's pending
-    // review / deep-research items.
+    // review items.
     const { runWithSuspendedAutoSave } = await import("@/lib/auto-save")
     await runWithSuspendedAutoSave(async () => {
       // Clear all per-project state BEFORE loading new project data
@@ -469,6 +483,11 @@ function App() {
       // Bump data version so any cached graphs/views invalidate
       useWikiStore.getState().bumpDataVersion()
       await saveLastProject(proj)
+      // 非提示词配置统一到项目根目录；根目录已有值优先，旧文件保留兼容。
+      const { migrateProjectSchemaFiles } = await import("@/lib/project-schema")
+      try { await migrateProjectSchemaFiles(proj.path) }
+      catch (error) { console.warn("根目录配置迁移未完成，继续兼容读取旧文件：", error) }
+      if (!isCurrentProject(proj)) return
 
       // Apply the project-specific worker limit before restoring its queue so
       // newly enqueued tasks never start with another project's concurrency.
@@ -491,6 +510,9 @@ function App() {
       // Await this before starting file sync: watcher events for raw/sources
       // may enqueue ingest tasks and require an active project queue.
       try {
+        const { restoreIngestReviewQueue } = await import("@/lib/ingest-review-queue")
+        await restoreIngestReviewQueue(proj.path)
+        if (!isCurrentProject(proj)) return
         const { restoreQueue } = await import("@/lib/ingest-queue")
         await restoreQueue(proj.id, proj.path)
       } catch (err) {
@@ -562,6 +584,7 @@ function App() {
       // conversation history load is deferred below.
       try {
         const savedChatPreferences = await loadChatPreferences(proj.path)
+        useChatStore.getState().setMaxHistoryMessages(await loadHistoryMessageLimit())
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
         useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)

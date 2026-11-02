@@ -1,0 +1,99 @@
+{
+  "message": {
+    "content": "根据知识库检索结果，imeta 在本项目语境中是 iuap 元数据体系里的**元数据查询组件**。需要说明：知识库中没有一篇专门定义 imeta 整体的现行版主题页，以下是从多个相关页面归纳的证据：\n\n1. **定位**：元数据服务（iuap-metadata-base）页面写明，元数据服务\"向上对接元数据 SDK、imeta 查询组件\"，即 imeta 是运行在元数据 SDK 之上的查询组件（wiki/modules/元数据服务（iuap-metadata-base）.md）。\n\n2. **核心查询 API 是 QuerySchema**：\"QuerySchema（imeta 查询 API）\"页说明 imeta 提供的一套面向元数据的查询 API，风格遵循 GraphQL，核心特点是屏蔽底层存储模型、完全面向元数据实体进行查询，基于 Java 实现，具有只读语义（wiki/topics/QuerySchema（imeta 查询 API）.md）。\n\n3. **接入方式**：通过 Spring Boot starter `iuap-ap-metaquery-starter` 依赖引入（来源摘要页 wiki/sources/3-元数据--14-11-元数据服务sdk与缓存--1cyes42.md 的\"imeta核心内容\"）；其 Spring 装配与 QueryConfiguration 构建流程见 wiki/designs/imeta Spring 装配与查询核心生命周期.md。\n\n4. **配置形态**：imeta 通过 imeta.xml 等配置管理查询仓、执行路由、查询语义、SQL 构建等参数，参数默认值与能力边界集中在 wiki/constraints/imeta 查询配置参数与能力边界.md；误配查询仓可导致升级后报错（案例见 wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md）。\n\n5. **历史组件结构**（仅历史参考）：2016-2017 旧版资料记载 imeta 由 core（元数据结构）、io（加载/保存/模型转换）、orm（数据库增删改查与查询解析）、biz、tpl、Spring 集成等部分组成（wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md）。该结构来自旧版历史文档，不代表当前版本实现。\n\n**证据边界**：现行版本下 imeta 的官方整体定义页缺失，上述第 1-4 点来自各相关页面交叉印证，属来源事实；历史组件结构仅适用于旧版资料。",
+    "role": "assistant"
+  },
+  "references": [
+    {
+      "title": "imeta 升级与二开适配限制",
+      "path": "wiki/constraints/imeta升级与二开适配限制.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "imeta 查询配置参数与能力边界",
+      "path": "wiki/constraints/imeta 查询配置参数与能力边界.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "KKZC-73200：R6 升级 V5 后 imeta 查询仓配置报错 RoleA of composition",
+      "path": "wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "升级迁移与安装类支持问题汇总",
+      "path": "wiki/cases/升级迁移与安装类支持问题汇总.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "IMetadataCustomerDocRpcService 自定义档案元数据RPC接口",
+      "path": "wiki/interfaces/IMetadataCustomerDocRpcService-自定义档案元数据RPC接口.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "202601 支持问题工单记录（元数据/特征/升级）",
+      "path": "wiki/cases/202601支持问题工单记录.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "imeta 特征属性处理使用边界约束",
+      "path": "wiki/constraints/imeta 特征属性处理使用边界约束.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据服务（iuap-metadata-base）",
+      "path": "wiki/modules/元数据服务（iuap-metadata-base）.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据服务、SDK与缓存 来源摘要",
+      "path": "wiki/sources/3-元数据--14-11-元数据服务sdk与缓存--1cyes42.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "入库审阅：特征/11-MDD、YPD与标准服务对接特征.md：原文 §9『特征扩展实体创建与抽取流程』的关键内容未在本次落盘页面中保留：9.1 的7步创建流程（md_meta_class 注册、md_biz_obj 挂载、md_attribute 注册、elastic_object/elastic_field 备份、同步事件、领域服务三件事）及其特征扩展实体注册查询 SQL；9.2 的抽取接口清单（POST /billmeta/biz/extractBiz、POST /billmeta/biz/extractBizSysByBillNo，均包含特征扩展实体）及『抽取后特征扩展实体作为子实体出现在业务对象树中』的结论。请核实知识库已有页面（如 wiki/implementations/业务对象抽取（extractBiz）运行机制.md、wiki/concepts/特征扩展实体在元数据模型中的标识与关系.md）是否已完整覆盖本来源的这些事实（尤其是 extractBizSysByBillNo 接口名与注册查询 SQL）；若未覆盖，请补入对应页面",
+      "path": "wiki/cases/入库审阅特征11-mddypd与标准服务对接特征md原文-9特征扩展实体创建与抽取流程的关键内容未在.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "QuerySchema（imeta 查询 API）",
+      "path": "wiki/topics/QuerySchema（imeta 查询 API）.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "imeta 多选引用属性条件翻译与中间表查询机制",
+      "path": "wiki/implementations/imeta 多选引用属性条件翻译与中间表查询机制.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据组件建模与配置核心约束",
+      "path": "wiki/constraints/元数据组件建模与配置核心约束.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "营销云领域元数据体系总览（2016-2017 旧版）",
+      "path": "wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据组件（Meta Component）",
+      "path": "wiki/topics/元数据组件（Meta Component）.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据相关问题排查指引",
+      "path": "wiki/faqs/元数据相关问题排查指引.md",
+      "kind": "wiki"
+    },
+    {
+      "title": "元数据组件与领域相关问题排查指引",
+      "path": "wiki/faqs/元数据组件与领域相关问题排查指引.md",
+      "kind": "wiki"
+    }
+  ],
+  "usage": {
+    "completionChars": 2118,
+    "promptChars": 108231,
+    "referenceCount": 17,
+    "toolEventCount": 46
+  }
+}

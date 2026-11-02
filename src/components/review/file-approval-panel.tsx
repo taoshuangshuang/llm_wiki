@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ShieldCheck, Star } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { getFileApprovals, reviewFileChange, setImportantFile, type FileApprovalState, type FileChangeProposal } from "@/commands/file-approval"
+import { getFileApprovals, proposalMoveTarget, reviewFileChange, setImportantFile, type FileApprovalState, type FileChangeProposal } from "@/commands/file-approval"
 import { readFile } from "@/commands/fs"
 import { buildWordDiff } from "@/lib/selection-edit"
 import { normalizePath } from "@/lib/path-utils"
@@ -96,7 +96,14 @@ export function FileApprovalPanel() {
         const path = `${normalizePath(projectPath).replace(/\/+$/, "")}/${item.path}`
         const current = useWikiStore.getState()
         if (current.selectedFile === path) {
-          if (item.proposed === null) current.closePreview()
+          const moveTo = proposalMoveTarget(item)
+          if (moveTo) {
+            const destination = `${normalizePath(projectPath).replace(/\/+$/, "")}/${moveTo}`
+            const content = await readFile(destination)
+            if (useWikiStore.getState().project?.path === projectPath && useWikiStore.getState().selectedFile === path) {
+              useWikiStore.getState().openFileInPreview(destination, content)
+            }
+          } else if (item.proposed === null) current.closePreview()
           else {
             const content = await readFile(path)
             if (useWikiStore.getState().project?.path === projectPath && useWikiStore.getState().selectedFile === path) {
@@ -134,15 +141,16 @@ function ProposalCard({ item, disabled, onReview }: {
 }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const diff = useMemo(() => expanded ? buildWordDiff(item.original, item.proposed ?? "") : [], [expanded, item.original, item.proposed])
+  const moveTo = proposalMoveTarget(item)
+  const diff = useMemo(() => expanded ? buildWordDiff(item.original, moveTo ? item.original : item.proposed ?? "") : [], [expanded, item.original, item.proposed, moveTo])
   return <article className="mx-4 mb-3 rounded-md border p-3 text-xs">
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="min-w-0 flex-1 break-all text-left font-medium hover:underline">{item.path} · {t(item.proposed === null ? "fileApproval.delete" : "fileApproval.modify")}</button>
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="min-w-0 flex-1 break-all text-left font-medium hover:underline">{item.path} · {moveTo ? t("fileApproval.move", { path: moveTo }) : t(item.proposed === null ? "fileApproval.delete" : "fileApproval.modify")}</button>
       <span className="text-muted-foreground">{t(`fileApproval.${item.status}`)}</span>
     </div>
     <div className="mt-1 text-muted-foreground">{item.source} · {new Date(item.createdAt).toLocaleString()}</div>
     {expanded && <>
-      <p className="mt-3 text-muted-foreground">{t("fileApproval.diffHint")}</p>
+      <p className="mt-3 text-muted-foreground">{t(moveTo ? "fileApproval.moveHint" : "fileApproval.diffHint")}</p>
       <pre className="my-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/30 p-3 font-mono leading-5">{diff.map((part, index) => <span key={index} className={part.type === "delete" ? "bg-red-500/15 text-red-700 line-through dark:text-red-300" : part.type === "insert" ? "bg-green-500/15 text-green-700 dark:text-green-300" : ""}>{part.value}</span>)}</pre>
       {item.status === "pending" && <div className="flex justify-end gap-2">
         <button type="button" disabled={disabled} onClick={() => void onReview(item, false)} className="rounded border px-3 py-1.5 hover:bg-accent disabled:opacity-50">{t("fileApproval.reject")}</button>

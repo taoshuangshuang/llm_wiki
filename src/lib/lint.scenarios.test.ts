@@ -16,11 +16,17 @@ vi.mock("@/commands/fs", () => realFs)
 
 let currentLlmResponse: string | null = null
 vi.mock("./llm-client", () => ({
-  streamChat: vi.fn(async (_cfg, _msgs, cb) => {
-    if (currentLlmResponse !== null) cb.onToken(currentLlmResponse)
+  streamChat: vi.fn(async (_cfg, messages, cb) => {
+    const system = String(messages[0].content)
+    if (system.includes("事实适用范围复核器")) cb.onToken('{"sameSubject":true,"sameVersion":true,"sameConditions":true,"incompatible":true,"explainedDifference":false}')
+    else if (currentLlmResponse !== null && system.includes("type=contradiction|duplicate")) cb.onToken(currentLlmResponse)
+    else cb.onToken('{"issues":[]}')
     cb.onDone()
   }),
 }))
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (command: string) => command === "retrieval_config" ? { effective: { title: true, keyword: true, vector: false, indexPage: true, graph: false } } : undefined) }))
+vi.mock("./evidence-retrieval", () => ({ retrieveEvidence: vi.fn(async () => ({ status: "completed", evidence: [], relations: [], targetResults: [], execution: { configVersion: "test", queries: [], channelStates: [], warnings: [], budgetReached: [], elapsedMs: 0, usage: { candidates: 0, queries: 0, contextChars: 0, readChars: 0 } } })) }))
 
 import { runStructuralLint, runSemanticLint, type LintResult } from "./lint"
 import { useWikiStore } from "@/stores/wiki-store"

@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect } from "react"
 import { Search, FileText, ImageIcon, X, ArrowUpRight } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
-import { searchWiki, tokenizeQuery, type SearchResult, type ImageRef } from "@/lib/search"
+import { searchWikiWithStatus, tokenizeQuery, type SearchResult, type ImageRef } from "@/lib/search"
 import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -35,6 +35,7 @@ export function SearchView() {
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [notice, setNotice] = useState("")
   // Lightbox state — null when closed. Held inline rather than via
   // a global store: nothing else needs to know which image is in
   // the lightbox, and search-view-local state means the modal
@@ -50,11 +51,13 @@ export function SearchView() {
       setSearching(true)
       setHasSearched(true)
       try {
-        const found = await searchWiki(normalizePath(project.path), q)
-        setResults(found)
+        const found = await searchWikiWithStatus(normalizePath(project.path), q)
+        setResults(found.results)
+        setNotice(found.status === "completed" ? "" : found.status === "disabled" ? "全库检索未启用" : `检索${found.status === "partial" ? "部分完成" : "失败"}：${found.warnings.join("；")}`)
       } catch (err) {
         console.error("Search failed:", err)
         setResults([])
+        setNotice(`检索失败：${String(err)}`)
       } finally {
         setSearching(false)
       }
@@ -205,6 +208,7 @@ export function SearchView() {
        * doesn't push the text list off-screen, both areas scroll
        * inside themselves."
        */}
+      {notice && <p role="status" className="px-4 py-2 text-xs text-amber-600">{notice}</p>}
       {searching ? (
         <div className="flex-1 p-4 text-center text-sm text-muted-foreground">
           {t("search.searching")}

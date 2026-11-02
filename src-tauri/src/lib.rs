@@ -5,6 +5,8 @@ mod commands;
 mod cors;
 mod panic_guard;
 mod proxy;
+mod project_schema;
+mod mutation;
 mod server_bind;
 mod tray;
 mod types;
@@ -566,6 +568,7 @@ pub fn run() {
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
+            if let Ok(directory) = app.path().app_data_dir() { commands::search::evidence::set_config_directory(directory); }
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
             if let Ok(dir) = app.path().resource_dir() {
@@ -622,14 +625,25 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agent::ingest::list_conversation_ingests,
+            agent::ingest::acknowledge_conversation_ingest,
             commands::fs::read_file,
             commands::fs::write_file,
+            commands::ingest_log::append_ingest_log,
+            commands::ingest_log::read_ingest_log,
             commands::fs::write_file_base64,
             commands::fs::write_file_atomic,
+            commands::fs::compare_and_write_file,
+            commands::review_state::merge_review_items,
+            commands::search::evidence::retrieve_evidence,
+            commands::search::evidence::retrieval_config,
+            commands::search::evidence::wiki_reference_context,
+            commands::search::evidence::save_retrieval_config,
             commands::file_approval::get_file_approvals,
             commands::file_approval::set_important_file,
             commands::file_approval::review_file_change,
             commands::file_approval::save_human_file,
+            commands::file_approval::save_workflow_file,
             commands::fs::apply_text_selection_edit,
             commands::fs::create_missing_wiki_page,
             commands::file_history::list_file_history,
@@ -643,6 +657,7 @@ pub fn run() {
             commands::fs::copy_directory,
             commands::fs::preprocess_file,
             commands::fs::delete_file,
+            agent::wiki_delete::delete_wiki_pages,
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
@@ -678,6 +693,11 @@ pub fn run() {
             commands::vectorstore::vector_delete,
             commands::vectorstore::vector_count,
             commands::vectorstore::vector_upsert_chunks,
+            commands::vectorstore::vector_upsert_indexed_chunks,
+            commands::vectorstore::vector_indexed_pages,
+            commands::wiki_index_watch::start_wiki_index_watcher,
+            commands::wiki_index_watch::stop_wiki_index_watcher,
+            commands::vectorstore::vector_prune_missing_pages,
             commands::vectorstore::vector_search_chunks,
             commands::vectorstore::vector_delete_page,
             commands::vectorstore::vector_count_chunks,

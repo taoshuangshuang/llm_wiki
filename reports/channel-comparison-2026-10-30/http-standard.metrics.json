@@ -1,0 +1,34 @@
+{
+  "name": "http-standard",
+  "request": {
+    "message": "imeta 是什么",
+    "mode": "standard",
+    "topK": 5,
+    "includeContent": false,
+    "persistSession": false,
+    "tools": {
+      "wiki": true,
+      "web": false,
+      "anytxt": false
+    }
+  },
+  "seconds": 124.82,
+  "rawBytes": 889839,
+  "compactBytes": 3878,
+  "usage": {
+    "completionChars": 2196,
+    "promptChars": 51796,
+    "referenceCount": 8,
+    "toolEventCount": 14
+  },
+  "referencePaths": [
+    "wiki/constraints/imeta升级与二开适配限制.md",
+    "wiki/cases/KKZC-73200-R6升级V5后imeta查询仓配置报错.md",
+    "wiki/concepts/MDD 与 YPD 调用 imeta 查询的入口与职责边界.md",
+    "wiki/constraints/imeta 查询配置参数与能力边界.md",
+    "wiki/interfaces/IMetadataCustomerDocRpcService-自定义档案元数据RPC接口.md",
+    "wiki/legacy/营销云领域元数据体系总览（2016-2017 旧版）.md",
+    "wiki/faqs/元数据相关问题排查指引.md",
+    "wiki/topics/元数据组件（Meta Component）.md"
+  ]
+}

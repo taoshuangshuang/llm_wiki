@@ -30,15 +30,16 @@ describe("source watch config", () => {
   it("uses the shared default fixture", () => {
     expect(DEFAULT_SOURCE_WATCH_CONFIG).toEqual(sourceWatchDefaults)
     expect(normalizeSourceWatchConfig({}).persistExtractedMarkdown).toBe(false)
-    expect(normalizeSourceWatchConfig({}).generateSourceSummary).toBe(false)
-    expect(normalizeSourceWatchConfig({ generateSourceSummary: true }).generateSourceSummary).toBe(true)
+    // 旧配置中的摘要开关被丢弃，不再影响新入库。
+    const legacyConfig = { ...sourceWatchDefaults, generateSourceSummary: true }
+    expect(normalizeSourceWatchConfig(legacyConfig)).not.toHaveProperty("generateSourceSummary")
     expect(normalizeSourceWatchConfig({}).parsingConcurrency).toBe(2)
     expect(normalizeSourceWatchConfig({}).ingestConcurrency).toBe(1)
     expect(
       normalizeSourceWatchConfig({ persistExtractedMarkdown: true }).persistExtractedMarkdown,
     ).toBe(true)
     expect(normalizeSourceWatchConfig({ parsingConcurrency: 100 }).parsingConcurrency).toBe(64)
-    expect(normalizeSourceWatchConfig({ ingestConcurrency: 100 }).ingestConcurrency).toBe(64)
+    expect(normalizeSourceWatchConfig({ ingestConcurrency: 100 }).ingestConcurrency).toBe(1)
     expect(normalizeSourceWatchConfig({ ingestConcurrency: 0 }).ingestConcurrency).toBe(1)
     expect(
       normalizeSourceWatchConfig({ parsingConcurrency: Number.NaN }).parsingConcurrency,

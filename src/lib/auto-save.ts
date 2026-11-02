@@ -1,5 +1,8 @@
 import { useReviewStore } from "@/stores/review-store"
-import { useLintStore } from "@/stores/lint-store"
+import { useLintRunStore } from "@/stores/lint-run-store"
+import { normalizePath } from "./path-utils"
+import { saveLintRunHistory } from "./lint-run-history"
+import { useLintStore, type LintItem } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences } from "./persist"
@@ -12,9 +15,16 @@ let chatTimer: ReturnType<typeof setTimeout> | null = null
 // during a project switch: resetProjectState() clears every store to empty,
 // and without this guard the debounced callbacks would persist those empty
 // arrays back to the OUTGOING project's .llm-wiki/*.json — wiping its pending
-// review / deep-research items. The switch flow flushes real data to disk via
+// review items. The switch flow flushes real data to disk via
 // flushAndSuspendAutoSave() first, then resumes once the new project loads.
 let suspended = false
+
+/** 保存用户处理后的列表，同时更新历史快照，避免重启后恢复已移除的卡片。 */
+async function saveLintState(projectPath: string, items: LintItem[]): Promise<void> {
+  await saveLintItems(projectPath, items)
+  const run = useLintRunStore.getState().runs[normalizePath(projectPath)]
+  if (run) await saveLintRunHistory(projectPath, run, items)
+}
 
 function clearTimers(): void {
   if (reviewTimer) { clearTimeout(reviewTimer); reviewTimer = null }
@@ -37,7 +47,7 @@ export async function flushAndSuspendAutoSave(): Promise<void> {
   const chat = useChatStore.getState()
   await Promise.allSettled([
     saveReviewItems(projectPath, review),
-    saveLintItems(projectPath, lint),
+    saveLintState(projectPath, lint),
     saveChatPreferences(projectPath, {
       useWebSearch: chat.useWebSearch,
       useAnyTxtSearch: chat.useAnyTxtSearch,
@@ -100,7 +110,7 @@ export function setupAutoSave(): void {
     if (lintTimer) clearTimeout(lintTimer)
     lintTimer = setTimeout(() => {
       if (projectPath) {
-        saveLintItems(projectPath, state.items).catch(() => {})
+        saveLintState(projectPath, state.items).catch(() => {})
       }
     }, 1000)
   })

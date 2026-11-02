@@ -526,3 +526,16 @@ export async function loadZoomLevel(): Promise<number> {
   const level = await store.get<number>(ZOOM_LEVEL_KEY)
   return normalizeZoomLevel(level)
 }
+
+/** 问答历史长度为应用级输出参数，不随项目工具偏好被覆盖。 */
+export async function saveHistoryMessageLimit(value: number): Promise<void> {
+  const store = await getStore()
+  await store.set("historyMessageLimit", Math.max(2, Math.min(100, Math.floor(value))))
+  await store.save()
+}
+
+export async function loadHistoryMessageLimit(): Promise<number> {
+  const store = await getStore()
+  const value = await store.get<number>("historyMessageLimit")
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(2, Math.min(100, Math.floor(value))) : 10
+}

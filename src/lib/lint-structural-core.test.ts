@@ -12,6 +12,27 @@ function page(index: number, total: number): StructuralLintPage {
 }
 
 describe("computeStructuralLint", () => {
+  it("章节引用不当成文件名报缺页，同时正确统计页面入链", () => {
+    const pages = [
+      { ...page(0, 2), outlinks: ["entities/page-1#章节", "#本页章节"] },
+      { ...page(1, 2), outlinks: [] },
+    ]
+    const findings = computeStructuralLint(pages)
+    expect(findings.some((item) => item.type === "broken-link")).toBe(false)
+    expect(findings.some((item) => item.type === "orphan" && item.page === "entities/page-1.md")).toBe(false)
+  })
+
+  it("同一页面重复引用失效目标只报一次，不合并不同页面或不同目标的问题", () => {
+    const pages = [
+      { ...page(0, 2), outlinks: ["missing", "missing", "another"] },
+      { ...page(1, 2), outlinks: ["missing"] },
+    ]
+    const broken = computeStructuralLint(pages).filter((item) => item.type === "broken-link")
+    expect(broken.map((item) => [item.page, item.brokenTarget])).toEqual([
+      ["entities/page-0.md", "missing"], ["entities/page-0.md", "another"], ["entities/page-1.md", "missing"],
+    ])
+  })
+
   it("finds typo candidates without scanning unrelated page names", () => {
     const pages = [
       { ...page(0, 2), shortName: "transformer.md", slug: "transformer", title: "Transformer", outlinks: [] },

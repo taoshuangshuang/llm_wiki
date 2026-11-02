@@ -39,7 +39,9 @@ beforeEach(async () => {
   vi.mocked(streamChat).mockImplementation(async (_config, messages, callbacks) => {
     const system = String(messages[0].content)
     let response = "Analysis of syntax parsing."
-    if (system.includes("业务模块分类器")) {
+    if (system.startsWith("核对新知识页和候选页")) {
+      response = JSON.stringify({ decisions: JSON.parse(String(messages[1].content)).candidates.map((page: { path: string }) => ({ path: page.path, verdict: "same" })) })
+    } else if (system.includes("业务模块分类器")) {
       const input = String(messages[1].content)
       classificationInputs.push(input)
       response = input.includes("Old evidence") ? '{"moduleIds":["query"]}' : '{"moduleIds":[]}'
@@ -67,9 +69,7 @@ describe("业务模块完整入库契约", () => {
     expect(saved).toContain("Old evidence")
     expect(saved).toContain("Additional evidence")
     expect(classificationInputs.some((input) => input.includes("Old evidence") && input.includes("Additional evidence"))).toBe(true)
-    // 模型遗漏 source 摘要时，原来的兜底页面也接受模块校验，不会成为漏网入口。
-    const summary = await readFileRaw(`${project!.path}/wiki/sources/incoming.md`)
-    expect(parseFrontmatter(summary).frontmatter?.tags).toContain("module/unclassified")
+
   })
   it("未改源文档重新入库时保持生成缓存，仍纠正磁盘页面的旧分类", async () => {
     const config = { ...useWikiStore.getState().llmConfig, model: "test", apiKey: "test", maxContextSize: 128000 }

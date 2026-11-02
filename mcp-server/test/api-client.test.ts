@@ -305,6 +305,11 @@ test("reviews requests unresolved review items with filters", async () => {
         options: [],
         resolved: false,
         createdAt: 1,
+        schemaVersion: 2,
+        subtype: "知识补充",
+        evidenceVersion: "e1",
+        runIds: ["run-1"],
+        evidence: [{ path: "wiki/a.md", revision: "sha256:abc", text: "需要补充的事实", startLine: 3, endLine: 3, snapshot: { runId: "run-1", side: "after" } }],
       }],
     }), { status: 200 })
   }
@@ -321,6 +326,9 @@ test("reviews requests unresolved review items with filters", async () => {
   assert.equal(result.count, 1)
   assert.equal(result.reviews[0]?.id, "r1")
   assert.equal(result.reviews[0]?.resolved, false)
+  assert.equal(result.reviews[0]?.subtype, "知识补充")
+  assert.equal(result.reviews[0]?.evidence?.[0]?.snapshot?.runId, "run-1")
+  assert.equal(result.reviews[0]?.evidenceVersion, "e1")
 })
 
 test("network failures include desktop app hint", async () => {
@@ -348,4 +356,74 @@ test("API errors include status and server message", async () => {
 
   const client = new LlmWikiApiClient({ fetchImpl })
   await assert.rejects(() => client.projects(), /LLM Wiki API 401: Unauthorized/)
+})
+
+test("deletePage posts a scoped exact path and preserves cleanup warnings", async () => {
+  const expected = {
+    deletedPaths: ["wiki/concepts/old.md"], rewrittenPaths: ["wiki/index.md"],
+    rewrittenFiles: 1, warnings: ["索引清理待重试"], verified: true,
+  }
+  const client = new LlmWikiApiClient({ token: "test-token", fetchImpl: async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:19828/api/v1/projects/project%20a/pages/delete")
+    assert.equal(init?.method, "POST")
+    assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer test-token")
+    assert.deepEqual(JSON.parse(String(init?.body)), { path: "wiki/concepts/old.md" })
+    return new Response(JSON.stringify({ ok: true, result: expected }), { status: 200 })
+  } })
+  assert.deepEqual(await client.deletePage("wiki/concepts/old.md", "project a"), expected)
+})
+
+test("deletePage rejects an unverified or unrelated deletion result", async () => {
+  for (const result of [
+    { verified: false, deletedPaths: ["wiki/old.md"] },
+    { verified: true, deletedPaths: ["wiki/other.md"] },
+  ]) {
+    const client = new LlmWikiApiClient({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, result }), { status: 200 }) })
+    await assert.rejects(() => client.deletePage("wiki/old.md"), /deletion was not verified/)
+  }
+})
+
+test("listPages preserves scoped pagination and snapshot", async () => {
+  const expected = { pages: [{ path: "wiki/data/table-2.md", bytes: 20 }], total: 3, offset: 1, nextOffset: 2, truncated: true, snapshot: "sha256:list" }
+  const client = new LlmWikiApiClient({ fetchImpl: async (input) => {
+    const url = new URL(String(input))
+    assert.equal(url.pathname, "/api/v1/projects/project%20a/pages")
+    assert.equal(url.searchParams.get("prefix"), "wiki/data/table-")
+    assert.equal(url.searchParams.get("offset"), "1")
+    assert.equal(url.searchParams.get("snapshot"), "sha256:list")
+    return new Response(JSON.stringify({ ok: true, result: expected }), { status: 200 })
+  } })
+  assert.deepEqual(await client.listPages("project a", { prefix: "wiki/data/table-", offset: 1, limit: 1, snapshot: "sha256:list" }), expected)
+})
+
+test("readSource preserves exact content, range, version and continuation", async () => {
+  const expected = { path: "raw/sources/doc.md", content: "原文  保留\n", revision: "sha256:source", totalLines: 9, startLine: 2, startColumn: 1, endLine: 2, nextStartLine: 3, nextStartColumn: 1, truncated: true, representation: "original_text" }
+  const client = new LlmWikiApiClient({ fetchImpl: async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:19828/api/v1/projects/current/sources/read")
+    assert.deepEqual(JSON.parse(String(init?.body)), { path: "raw/sources/doc.md", startLine: 2, startColumn: 1, maxChars: 7, revision: "sha256:source" })
+    return new Response(JSON.stringify({ ok: true, result: expected }), { status: 200 })
+  } })
+  assert.deepEqual(await client.readSource("raw/sources/doc.md", "current", { startLine: 2, startColumn: 1, maxChars: 7, revision: "sha256:source" }), expected)
+})
+
+test("movePage validates identity and reports indexing still pending", async () => {
+  const expected = { fromPath: "wiki/old.md", toPath: "wiki/new.md", rewrittenPaths: ["wiki/index.md", "wiki/new.md"], indexingPendingPaths: ["wiki/new.md"], warnings: ["模型未配置"], verified: true }
+  const client = new LlmWikiApiClient({ fetchImpl: async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:19828/api/v1/projects/current/pages/move")
+    assert.deepEqual(JSON.parse(String(init?.body)), { path: "wiki/old.md", toPath: "wiki/new.md", expectedRevision: "sha256:old" })
+    return new Response(JSON.stringify({ ok: true, result: expected }), { status: 200 })
+  } })
+  assert.deepEqual(await client.movePage("wiki/old.md", "wiki/new.md", "current", "sha256:old"), expected)
+  for (const result of [{ ...expected, verified: false }, { ...expected, toPath: "wiki/another.md" }]) {
+    const invalid = new LlmWikiApiClient({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, result }), { status: 200 }) })
+    await assert.rejects(() => invalid.movePage("wiki/old.md", "wiki/new.md"), /movement was not verified/)
+  }
+})
+
+test("listPages rejects a missing completeness marker or inconsistent continuation", async () => {
+  const base = { pages: [{ path: "wiki/a.md", bytes: 2 }], total: 2, offset: 0, nextOffset: 1, snapshot: "sha256:list" }
+  for (const result of [base, { ...base, truncated: false }, { ...base, truncated: true, nextOffset: null }]) {
+    const client = new LlmWikiApiClient({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, result }), { status: 200 }) })
+    await assert.rejects(() => client.listPages(), /expected boolean|inconsistent pagination/)
+  }
 })

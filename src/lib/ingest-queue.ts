@@ -5,8 +5,9 @@ import { getProjectPathById } from "@/lib/project-identity"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { IngestCommitCoordinator } from "@/lib/ingest-commit-coordinator"
-import { clampUserConcurrency } from "@/lib/concurrency-limits"
 import { isFileApprovalRequired } from "@/lib/file-approval-error"
+import { setIngestPipelinePaused, withIngestPipeline } from "./ingest-pipeline"
+import { IngestProcessLog } from "./ingest-process-log"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ export interface IngestTask {
    *  `projectPath` because the filesystem location can change — tasks
    *  look up the current path via the registry at run time. */
   projectId: string
+  documentRunId?: string
   sourcePath: string  // relative to project: "raw/sources/folder/file.pdf"
   folderContext: string  // e.g. "AI-Research > papers" or ""
   status: "pending" | "processing" | "done" | "failed" | "cancelled"
@@ -39,7 +41,7 @@ interface ActiveIngestRun {
 
 const activeRuns = new Map<string, ActiveIngestRun>()
 let commitCoordinator = new IngestCommitCoordinator()
-let workerLimit = 1
+const workerLimit = 1
 let scheduling = false
 let queueEpoch = 0
 /** User-controlled pause. When true, processNext stops handing pending
@@ -71,11 +73,12 @@ let processedSinceDrain = false
 // Abort controller for the review-sweep LLM call so switching projects
 // cancels a long-running judgment instead of burning tokens.
 let sweepAbortController: AbortController | null = null
+let reviewQueueTransition: Promise<void> = Promise.resolve()
 let inactiveQueueWrite: Promise<void> = Promise.resolve()
 interface QueueWriteRequest {
   path: string
   snapshot: string
-  resolve: () => void
+  resolve: (saved: boolean) => void
 }
 const pendingActiveQueueWrites: QueueWriteRequest[] = []
 let activeQueueWriteRunning = false
@@ -85,8 +88,8 @@ function resetQueueAccounting(): void {
   completedSinceIdle = 0
 }
 
-export function setIngestWorkerLimit(limit: number): void {
-  workerLimit = clampUserConcurrency(limit)
+export function setIngestWorkerLimit(_limit: number): void {
+  // 保留旧设置接口兼容性；文档入库固定串行。
   if (currentProjectId && !paused) processNext(currentProjectId)
 }
 
@@ -100,12 +103,12 @@ function queueFilePath(projectPath: string): string {
   return `${normalizePath(projectPath)}/.llm-wiki/ingest-queue.json`
 }
 
-async function saveQueue(projectPath: string): Promise<void> {
+async function saveQueue(projectPath: string): Promise<boolean> {
   // Capture the snapshot now, then serialize writes so an older async write
   // can never land after a newer queue state.
   const toSave = queue.filter((t) => t.status !== "done")
   const snapshot = JSON.stringify(toSave, null, 2)
-  await new Promise<void>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     pendingActiveQueueWrites.push({
       path: queueFilePath(projectPath),
       snapshot,
@@ -121,12 +124,14 @@ async function drainActiveQueueWrites(): Promise<void> {
   if (!request) return
   const epoch = activeQueueWriteEpoch
   activeQueueWriteRunning = true
+  let saved = false
   try {
     await writeFile(request.path, request.snapshot)
+    saved = true
   } catch {
     // Queue persistence is best-effort; the in-memory queue remains authoritative.
   } finally {
-    request.resolve()
+    request.resolve(saved)
     if (epoch === activeQueueWriteEpoch) {
       activeQueueWriteRunning = false
       void drainActiveQueueWrites()
@@ -198,6 +203,7 @@ function upsertQueuedIngestTask(
   if (pendingOrStopped) {
     pendingOrStopped.sourcePath = normalizedSourcePath
     pendingOrStopped.folderContext = folderContext || pendingOrStopped.folderContext
+    delete pendingOrStopped.documentRunId
     pendingOrStopped.status = "pending"
     pendingOrStopped.error = null
     pendingOrStopped.retryCount = 0
@@ -282,7 +288,7 @@ export async function enqueueIngest(
   }
 
   const id = upsertQueuedIngestTask(projectId, sourcePath, folderContext)
-  await saveQueue(currentProjectPath)
+  if (!await saveQueue(currentProjectPath)) throw new Error("入库队列未能持久化，请重试")
 
   processNext(currentProjectId)
 
@@ -308,7 +314,7 @@ export async function enqueueBatch(
     ids.push(upsertQueuedIngestTask(projectId, file.sourcePath, file.folderContext))
   }
 
-  await saveQueue(currentProjectPath)
+  if (!await saveQueue(currentProjectPath)) throw new Error("入库队列未能持久化，请重试")
   console.log(`[Ingest Queue] Enqueued ${files.length} files`)
   processNext(currentProjectId)
 
@@ -542,6 +548,7 @@ export async function cancelTask(taskId: string): Promise<void> {
   task.error = null
   if (!queue.some((t) => t.status === "pending" || t.status === "processing")) {
     paused = false
+  setIngestPipelinePaused(false)
     clearUsageLimitAutoResume()
   }
   await saveQueue(currentProjectPath)
@@ -575,6 +582,7 @@ export async function cancelTasks(taskIds: readonly string[]): Promise<number> {
   }
   if (!queue.some((task) => task.status === "pending" || task.status === "processing")) {
     paused = false
+  setIngestPipelinePaused(false)
     clearUsageLimitAutoResume()
   }
   await saveQueue(currentProjectPath)
@@ -634,6 +642,7 @@ export async function discardTasksForSources(
   queue = queue.filter((task) => !targetIds.has(task.id))
   if (!queue.some((task) => task.status === "pending" || task.status === "processing")) {
     paused = false
+  setIngestPipelinePaused(false)
     clearUsageLimitAutoResume()
   }
   await saveQueue(currentProjectPath)
@@ -678,11 +687,22 @@ export async function cancelAllTasks(): Promise<number> {
     cancelled += 1
   }
   paused = false
+  setIngestPipelinePaused(false)
   clearUsageLimitAutoResume()
   await saveQueue(currentProjectPath)
   console.log(`[Ingest Queue] Cancelled all and retained: ${cancelled} tasks`)
   if (!hadProcessingTask) processNext(currentProjectId)
   return cancelled
+}
+
+function transitionReviewQueue(path: string, resume: boolean): void {
+  reviewQueueTransition = reviewQueueTransition.then(async () => {
+    if (path !== currentProjectPath) return
+    const reviewQueue = await import("./ingest-review-queue")
+    if (path !== currentProjectPath) return
+    if (resume) await reviewQueue.restoreIngestReviewQueue(path)
+    else await reviewQueue.pauseIngestReviewQueue()
+  }).catch((error) => console.error("切换审阅执行状态失败，持久请求已保留", error))
 }
 
 /**
@@ -697,6 +717,8 @@ export async function cancelAllTasks(): Promise<number> {
 export function pauseProcessing(): void {
   clearUsageLimitAutoResume()
   paused = true
+  setIngestPipelinePaused(true)
+  if (currentProjectPath) transitionReviewQueue(currentProjectPath, false)
   const processingTasks = queue.filter(
     (task) => task.projectId === currentProjectId && task.status === "processing",
   )
@@ -720,7 +742,9 @@ export function pauseProcessing(): void {
 export function resumeProcessing(): void {
   clearUsageLimitAutoResume()
   paused = false
+  setIngestPipelinePaused(false)
   blockedOnLlmConfig = false
+  if (currentProjectPath) transitionReviewQueue(currentProjectPath, true)
   console.log("[Ingest Queue] Resumed")
   if (currentProjectId) processNext(currentProjectId)
 }
@@ -790,6 +814,7 @@ export function clearQueueState(): void {
   activeRuns.clear()
   scheduling = false
   paused = false
+  setIngestPipelinePaused(false)
   blockedOnLlmConfig = false
   currentProjectId = ""
   currentProjectPath = ""
@@ -798,9 +823,8 @@ export function clearQueueState(): void {
   resetQueueAccounting()
   activeQueueWriteEpoch += 1
   activeQueueWriteRunning = false
-  for (const request of pendingActiveQueueWrites.splice(0)) request.resolve()
+  for (const request of pendingActiveQueueWrites.splice(0)) request.resolve(false)
   commitCoordinator = new IngestCommitCoordinator()
-  workerLimit = 1
 }
 
 /**
@@ -895,6 +919,7 @@ export async function restoreQueue(
   // Every project loads un-paused. Pause is a current-session control;
   // it does not carry across project switches or app restarts.
   paused = false
+  setIngestPipelinePaused(false)
   blockedOnLlmConfig = false
   resetQueueAccounting()
   currentProjectId = projectId
@@ -951,7 +976,8 @@ export async function restoreQueue(
 
 // ── Processing ────────────────────────────────────────────────────────────
 
-const MAX_RETRIES = 3
+// 首次执行失败后只重新入库一次；retryCount 记录累计失败次数。
+const MAX_ATTEMPTS = 2
 const USAGE_LIMIT_AUTO_RESUME_MS = 15 * 60 * 1000
 let usageLimitResumeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -972,6 +998,7 @@ function scheduleUsageLimitAutoResume(projectId: string): void {
     usageLimitResumeTimer = null
     if (currentProjectId !== projectId) return
     paused = false
+  setIngestPipelinePaused(false)
     console.log("[Ingest Queue] Auto-resuming after provider usage limit pause")
     processNext(projectId)
   }, USAGE_LIMIT_AUTO_RESUME_MS)
@@ -990,7 +1017,7 @@ async function onQueueDrained(projectId: string, projectPath: string, epoch: num
   try {
     const { sweepResolvedReviews } = await import("@/lib/sweep-reviews")
     if (currentProjectId !== projectId || queueEpoch !== epoch) return
-    await sweepResolvedReviews(projectPath, signal)
+    await withIngestPipeline(() => sweepResolvedReviews(projectPath, signal), signal)
   } catch (err) {
     console.error("[Ingest Queue] Failed to load sweep-reviews:", err)
   } finally {
@@ -1014,15 +1041,24 @@ async function runTask(
     if (!run.writtenFiles.includes(relativePath)) run.writtenFiles.push(relativePath)
   }
 
+  const processLog = new IngestProcessLog(projectPath, fullSourcePath, crypto.randomUUID(), "queue")
+  let sourceSkip: import("./ingest-source-content").IngestSourceSkip | undefined
   try {
+    const config = getTaskLlmConfig("ingest")
+    processLog.registerSecrets(config)
+    processLog.record("queue-attempt-start", { task })
     const writtenFiles = await autoIngest(
       projectPath,
       fullSourcePath,
-      getTaskLlmConfig("ingest"),
+      config,
       run.controller.signal,
       task.folderContext,
       trackWrittenFile,
-      { runCommit },
+      { runCommit, onSourceSkipped: (reason) => { sourceSkip = reason }, onDocumentPlanned: async (documentRunId) => {
+        if (run.epoch !== queueEpoch || currentProjectId !== projectId || run.controller.signal.aborted) throw new Error("入库任务已取消或切换项目")
+        task.documentRunId = documentRunId
+        if (!await saveQueue(projectPath)) throw new Error("来源运行归属未能持久化，停止入库")
+      } },
     )
     if (currentProjectId !== projectId || run.epoch !== queueEpoch) return
     run.writtenFiles = writtenFiles
@@ -1035,6 +1071,12 @@ async function runTask(
       await saveQueue(projectPath)
       return
     }
+    if (sourceSkip) {
+      queue = queue.filter((candidate) => candidate.id !== task.id)
+      await saveQueue(projectPath)
+      processLog.record("queue-skipped", sourceSkip)
+      return
+    }
     if (writtenFiles.length === 0) throw new Error("Ingest produced no output files")
 
     cancelledInFlightTaskIds.delete(task.id)
@@ -1042,8 +1084,10 @@ async function runTask(
     completedSinceIdle++
     processedSinceDrain = true
     await saveQueue(projectPath)
+    processLog.record("queue-completed", { writtenFiles })
     console.log(`[Ingest Queue] Done: ${task.sourcePath}`)
   } catch (err) {
+    processLog.record("queue-attempt-error", { error: err, aborted: run.controller.signal.aborted })
     if (currentProjectId !== projectId || run.epoch !== queueEpoch) return
     const currentTask = queue.find((candidate) => candidate.id === task.id)
     if (cancelledInFlightTaskIds.delete(task.id) || currentTask?.status === "cancelled") {
@@ -1072,6 +1116,7 @@ async function runTask(
       task.status = "pending"
       task.error = `Paused after provider usage limit: ${message}`
       paused = true
+      setIngestPipelinePaused(true)
       for (const [taskId, activeRun] of activeRuns) {
         if (taskId === task.id) continue
         const sibling = queue.find((candidate) => candidate.id === taskId)
@@ -1090,15 +1135,16 @@ async function runTask(
 
     task.retryCount++
     task.error = message
-    if (task.retryCount >= MAX_RETRIES) {
+    if (task.retryCount >= MAX_ATTEMPTS) {
       task.status = "failed"
       console.log(`[Ingest Queue] Failed (${task.retryCount}x): ${task.sourcePath} — ${message}`)
     } else {
       task.status = "pending"
-      console.log(`[Ingest Queue] Error (retry ${task.retryCount}/${MAX_RETRIES}): ${task.sourcePath} — ${message}`)
+      console.log(`[Ingest Queue] Error (retry ${task.retryCount}/${MAX_ATTEMPTS - 1}): ${task.sourcePath} — ${message}`)
     }
     await saveQueue(projectPath)
   } finally {
+    processLog.record("queue-attempt-finish", { task, retainedInQueue: queue.some((entry) => entry.id === task.id), writtenFiles: run.writtenFiles, aborted: run.controller.signal.aborted })
     run.releaseCommitTurn()
     if (activeRuns.get(task.id) === run) activeRuns.delete(task.id)
     if (currentProjectId === projectId && run.epoch === queueEpoch && !paused) processNext(projectId)
@@ -1126,6 +1172,7 @@ async function startTask(projectId: string, task: IngestTask): Promise<boolean> 
     return false
   }
   task.error = null
+  delete task.documentRunId
 
   const reservation = commitCoordinator.reserve()
   const run: ActiveIngestRun = {

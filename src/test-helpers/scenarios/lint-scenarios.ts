@@ -6,7 +6,7 @@ import type { LintScenario } from "./types"
 // [[link]] to it. Scenario wikis here are built with that in mind.
 
 function page(title: string, body: string): string {
-  return `---\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
+  return `---\ntype: concept\nsources: [fixture.md]\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
 }
 
 export const lintScenarios: LintScenario[] = [
@@ -108,8 +108,8 @@ export const lintScenarios: LintScenario[] = [
     name: "semantic/contradiction-found",
     description:
       "Two cross-linked pages make conflicting claims. Structural lint " +
-      "sees no issues, but the mocked semantic LLM response emits a LINT " +
-      "block that the parser extracts into a contradiction finding.",
+      "sees no issues, but the mocked review response supplies body evidence " +
+      "that is independently verified as a contradiction.",
     initialWiki: {
       "wiki/index.md": "# Index\n\n- [[attention]]\n- [[transformer]]\n",
       "wiki/attention.md": page(
@@ -121,21 +121,15 @@ export const lintScenarios: LintScenario[] = [
         "The transformer's [[attention]] layer uses a linear kernel, not softmax.",
       ),
     },
-    llmResponse: [
-      "Reviewing the pages I found one contradiction:",
-      "",
-      "---LINT: contradiction | warning | Attention function differs between pages---",
-      "attention.md claims softmax is always used, but transformer.md describes a",
-      "linear attention kernel. One page needs correction.",
-      "PAGES: attention.md, transformer.md",
-      "---END LINT---",
-    ].join("\n"),
+    llmResponse: JSON.stringify({ issues: [{ type: "contradiction", title: "Attention function differs between pages", description: "Two pages disagree about the attention function.", evidence: [
+      { id: "after-0", quote: "Attention ALWAYS uses the softmax function." },
+      { id: "after-1", quote: "The transformer's [[attention]] layer uses a linear kernel, not softmax." },
+    ] }] }),
     expected: {
       structural: [],
       semantic: [
         {
-          // Parser collapses all semantic findings to type="semantic";
-          // the original LLM-declared type ("contradiction") lives in detail.
+          // 公共审阅事项投影为 semantic 卡片，保留原始问题类型与证据。
           type: "semantic",
           severity: "warning",
           titleContains: "Attention function differs",

@@ -6,7 +6,7 @@
  * and ingest caches. Those read-modify-write operations must not overlap.
  *
  * Expensive source preparation may run concurrently, but commit sections use
- * this mutex so queue, Save-to-Wiki, and deep-research writes take turns.
+ * this mutex so queue and Save-to-Wiki writes take turns.
  *
  * The lock is a simple promise chain. No timeouts, no fairness, no
  * re-entrancy detection — those would all be overkill. If `fn`

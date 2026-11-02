@@ -1,3 +1,4 @@
+import { commitIngestPage, contentRevision } from "@/lib/ingest-run"
 import { readFile, writeFile } from "@/commands/fs"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { streamChat } from "@/lib/llm-client"
@@ -8,6 +9,9 @@ import { replaceModuleTags } from "./page-tags"
 import { DEFAULT_INGEST_PROMPTS, renderIngestPromptTemplate } from "@/lib/ingest-prompts"
 import { resolveIngestReasoning } from "@/lib/reasoning-capabilities"
 import { withLlmStage } from "@/lib/llm-observer"
+import { withProjectLock } from "@/lib/project-mutex"
+import { assertIngestSnapshotsUnchanged } from "@/lib/ingest-write-guard"
+import { loadProjectSchema } from "@/lib/project-schema"
 
 export interface ModuleTagResult { content: string; warnings: string[] }
 export type ModuleTagWriter = ((content: string) => Promise<ModuleTagResult>) & { enabled: boolean }
@@ -59,12 +63,13 @@ export async function createModuleTagWriter(
   classificationPolicy: string = DEFAULT_INGEST_PROMPTS.classification,
   classificationTemplate: string = DEFAULT_INGEST_PROMPTS.classificationTemplate,
 ): Promise<ModuleTagWriter> {
-  let schema: string
-  try { schema = await readFile(`${projectPath.replace(/\/+$/, "")}/schema.md`) }
-  catch { return unchangedWriter }
   let catalog: ModuleCatalog | null
   let configurationWarning = ""
-  try { catalog = parseModuleCatalog(schema) }
+  try {
+    const schema = await loadProjectSchema(projectPath, "classification")
+    catalog = parseModuleCatalog(schema)
+    if (!catalog && schema.trim()) throw new Error("业务模块文件缺少 Business Modules 或业务模块章节。")
+  }
   catch (error) {
     configurationWarning = `业务模块配置无效，页面暂归未分类：${error instanceof Error ? error.message : String(error)}`
     catalog = parseModuleCatalog('## Business Modules\n```json\n{"version":1,"modules":[]}\n```')
@@ -95,6 +100,8 @@ export async function refreshCachedModuleTags(
   signal?: AbortSignal, onFileWritten?: (path: string) => void,
   classificationPolicy: string = DEFAULT_INGEST_PROMPTS.classification,
   classificationTemplate: string = DEFAULT_INGEST_PROMPTS.classificationTemplate,
+  runCommit: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => withProjectLock(projectPath, operation),
+  runId?: string,
 ): Promise<{ updated: number; warnings: string[] }> {
   const classify = await createModuleTagWriter(projectPath, config, signal, classificationPolicy, classificationTemplate)
   if (!classify.enabled) return { updated: 0, warnings: [] }
@@ -114,9 +121,14 @@ export async function refreshCachedModuleTags(
       warnings.push(...result.warnings.map((warning) => `${path}: ${warning}`))
       signal?.throwIfAborted()
       if (result.content === previous) continue
-      await writeFile(fullPath, result.content)
-      updated++
-      onFileWritten?.(path)
+      await runCommit(async () => {
+        signal?.throwIfAborted()
+        await assertIngestSnapshotsUnchanged(root, new Map([[path, previous]]))
+        if (runId) await commitIngestPage(projectPath, runId, path, previous, result.content, `maintenance-modules-${(await contentRevision(result.content)).slice(7)}`, "maintenance")
+        else await writeFile(fullPath, result.content)
+        updated++
+        onFileWritten?.(path)
+      })
     } catch (error) {
       signal?.throwIfAborted()
       warnings.push(`${path}: 模块标签更新失败：${error instanceof Error ? error.message : String(error)}`)

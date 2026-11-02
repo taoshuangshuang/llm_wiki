@@ -3,46 +3,29 @@ import { X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { ChatPanel } from "@/components/chat/chat-panel"
 import { useChatStore } from "@/stores/chat-store"
-import { useResearchStore } from "@/stores/research-store"
 import { useReviewChatStore } from "@/stores/review-chat-store"
-import { ResearchPanel } from "./research-panel"
 
-/** 共用右侧空间；切换标签只隐藏内容，不中断聊天或研究任务。 */
-export function WorkspaceRightPanel({ conversationId }: { conversationId?: string }) {
+/** 右侧空间仅呈现条目对应的审阅会话。 */
+export function WorkspaceRightPanel({ conversationId, visible = true }: { conversationId?: string; visible?: boolean }) {
   const { t } = useTranslation()
-  const activeTab = useReviewChatStore((state) => state.activeTab)
-  const setActiveTab = useReviewChatStore((state) => state.setActiveTab)
   const close = useReviewChatStore((state) => state.close)
-  const setResearchOpen = useResearchStore((state) => state.setPanelOpen)
-  const showConversation = Boolean(conversationId && activeTab === "review")
 
   useEffect(() => {
-    if (conversationId) {
-      useChatStore.getState().setActiveConversation(conversationId)
-    }
-  }, [conversationId])
+    // 隐藏期间允许主聊天切换会话，重新展示时恢复条目对应的审阅会话。
+    if (visible && conversationId) useChatStore.getState().setActiveConversation(conversationId)
+  }, [conversationId, visible])
 
-  if (!conversationId) return <ResearchPanel />
+  if (!conversationId) return null
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b px-2 py-2">
-        <div className="flex min-w-0 flex-1 gap-1" role="tablist" aria-label={t("review.panelTabs")}>
-          <button type="button" role="tab" aria-selected={showConversation} aria-controls="review-conversation-panel" id="review-conversation-tab" onClick={() => setActiveTab("review")} className={`rounded px-2 py-1 text-xs ${showConversation ? "bg-accent font-medium" : "text-muted-foreground hover:bg-accent"}`}>
-            {t("review.conversationTab")}
-          </button>
-          <button type="button" role="tab" aria-selected={!showConversation} aria-controls="review-research-panel" id="review-research-tab" onClick={() => { setResearchOpen(true); setActiveTab("research") }} className={`rounded px-2 py-1 text-xs ${!showConversation ? "bg-accent font-medium" : "text-muted-foreground hover:bg-accent"}`}>
-            {t("research.title")}
-          </button>
-        </div>
-        <button type="button" onClick={() => { close(); setResearchOpen(false) }} className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label={t("review.closePanel")}>
+      <div className="flex shrink-0 items-center justify-between gap-1 border-b px-2 py-2">
+        <span className="px-2 text-xs font-medium">{t("review.conversationTab")}</span>
+        <button type="button" onClick={close} className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label={t("review.closePanel")}>
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className={`min-h-0 flex-1 ${showConversation ? "" : "hidden"}`} role="tabpanel" id="review-conversation-panel" aria-labelledby="review-conversation-tab">
+      <div className="min-h-0 flex-1">
         <ChatPanel compact />
-      </div>
-      <div className={`min-h-0 flex-1 ${showConversation ? "hidden" : ""}`} role="tabpanel" id="review-research-panel" aria-labelledby="review-research-tab">
-        <ResearchPanel embedded />
       </div>
     </div>
   )

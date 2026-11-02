@@ -1,0 +1,4 @@
+{
+  "invalid-json": "{\"summary\":\"来源《自定义函数定义》的关键内容均已保留在 wiki/integrations/QuerySchema结构定义与典型使用示例集.md 7.4 节：使用限制与两个异常（FunctionNotFoundException/IllegalArgumentException，含完整类名）、Spring 注册方法与函数签名列表、date_format 示例查询方案 JSON 与 Java 创建代码、总数量查询与分页查询 SQL。来源中函数参数兼容性表为丢失的图片，页面已如实注明并补充另一来源的兼容表及版本边界注记，处理符合规范。\"} ,\"issues\":[]}",
+  "missing-issues": "{\"summary\":\"来源为《实体id与租户id关系补充》的 addCustomEntityRelation 接口说明。页面第 4 节完整收录了四个环境端点、请求体 ids/tenantId 结构及前置条件（实体已扩展租户级），并明确标注了来源边界与未提供的内容，未超出证据。无遗漏或失真。\"}"
+}

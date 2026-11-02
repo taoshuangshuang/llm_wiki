@@ -21,6 +21,31 @@ const rep = (ch: string, n: number): string => ch.repeat(n)
 /** Concatenate lines with \n — readability sugar for test fixtures. */
 const lines = (...ls: string[]): string => ls.join("\n")
 
+describe("向量片段的正文定位契约", () => {
+  it("长段落按句子切分后不重复回退，片段范围应按原文顺序前进", () => {
+    // 同一段落包含多句，既能走句子切分，也能暴露随后错误执行硬切分的重复片段。
+    const content = "缓存数据需要定期更新。".repeat(80)
+    const chunks = chunkMarkdown(content, { targetChars: 180, maxChars: 260, minChars: 0, overlapChars: 0 })
+    expect(chunks.map((chunk) => chunk.text).join("")).toBe(content)
+    for (let index = 1; index < chunks.length; index++) {
+      expect(chunks[index].charStart).toBe(chunks[index - 1].charEnd)
+    }
+  })
+
+  it.each([0, 40])("多段正文切片必须保留原文和偏移，重叠长度为 %i", (overlapChars) => {
+    // 审阅直接用正文 contains(chunk.text) 校验版本，拼接时丢失空行会被误判为过期。
+    const content = "---\ntitle: 缓存\n---\n# 缓存\n\n" + Array.from({ length: 12 }, (_, index) =>
+      `第${index}段：缓存更新需要保留上下文。` + "正文内容。".repeat(8),
+    ).join("\n\n  \n")
+    const chunks = chunkMarkdown(content, { targetChars: 180, maxChars: 260, minChars: 100, overlapChars })
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) {
+      expect(content.includes(chunk.text)).toBe(true)
+      expect(content.slice(chunk.charStart, chunk.charEnd)).toBe(chunk.text)
+    }
+  })
+})
+
 // ── stripFrontmatter ────────────────────────────────────────────────
 
 describe("stripFrontmatter", () => {

@@ -60,6 +60,19 @@ const PER_PAGE_FRAC = 0.3
 const PER_PAGE_FLOOR = 5_000
 
 /**
+ * 审阅按已组装的完整输入计算剩余输出空间，不复用聊天的固定回答比例。
+ * 现有配置仍以字符计量；每 token 按 4 字符换算仅是预算估算，并非模型分词计数。
+ * 固定保留 1K 字符容纳消息封装等开销；容量不足时返回 0，不挤掉输入或强塞最低额度。
+ */
+export function computeRemainingOutputBudget(maxContextSize: number | undefined, inputChars: number) {
+  if (!Number.isFinite(inputChars) || inputChars < 0) throw new Error("输入字符数必须是非负有限数值")
+  const maxCtx = computeContextBudget(Number.isFinite(maxContextSize) ? maxContextSize : undefined).maxCtx
+  const safetyChars = 1_024
+  const outputTokens = Math.max(0, Math.floor((maxCtx - inputChars - safetyChars) / 4))
+  return { maxCtx, safetyChars, outputTokens }
+}
+
+/**
  * Compute character budgets from the LLM's max context window.
  *
  * Falsy `maxContextSize` (0 / NaN / undefined) falls back to the

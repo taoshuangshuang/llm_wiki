@@ -5,7 +5,7 @@
  * stores. The auto-save subscriptions are debounced, so without a guard their
  * timers fired AFTER the store was cleared but while project?.path still pointed
  * at the OUTGOING project — persisting empty arrays over that project's pending
- * review / deep-research items. Switching back then loaded an emptied review.json.
+ * review items. Switching back then loaded an emptied review.json.
  *
  * flushAndSuspendAutoSave() must (1) persist the real current state to disk and
  * (2) suspend the subscriptions so the subsequent clear-to-empty does not write.
@@ -19,6 +19,8 @@ const { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences } =
   saveChatPreferences: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock("./lint-run-history", () => ({ saveLintRunHistory: vi.fn(async () => {}) }))
+
 vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences }))
 
 import {
@@ -28,6 +30,8 @@ import {
   runWithSuspendedAutoSave,
 } from "./auto-save"
 import { useReviewStore } from "@/stores/review-store"
+import { saveLintRunHistory } from "./lint-run-history"
+import { DEFAULT_LINT_RUN, useLintRunStore } from "@/stores/lint-run-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -44,6 +48,8 @@ function review(id: string): ReviewItem {
 let registered = false
 
 beforeEach(() => {
+  vi.mocked(saveLintRunHistory).mockClear()
+  useLintRunStore.setState({ runs: {} })
   saveReviewItems.mockClear()
   saveLintItems.mockClear()
   saveChatHistory.mockClear()
@@ -75,7 +81,9 @@ describe("auto-save project-switch guard", () => {
     useReviewStore.setState({ items: [review("a1")] })
 
     await flushAndSuspendAutoSave()
-    saveReviewItems.mockClear()
+    vi.mocked(saveLintRunHistory).mockClear()
+  useLintRunStore.setState({ runs: {} })
+  saveReviewItems.mockClear()
     saveLintItems.mockClear()
 
     // resetProjectState would do this — clear stores while path is still A.
@@ -115,7 +123,9 @@ describe("auto-save project-switch guard", () => {
       },
     )).rejects.toThrow("open failed")
 
-    saveReviewItems.mockClear()
+    vi.mocked(saveLintRunHistory).mockClear()
+  useLintRunStore.setState({ runs: {} })
+  saveReviewItems.mockClear()
     saveLintItems.mockClear()
     saveChatHistory.mockClear()
     saveChatPreferences.mockClear()
@@ -173,4 +183,13 @@ describe("auto-save project-switch guard", () => {
       disabledSkills: [],
     })
   })
+})
+
+
+it("用户移除卡片后的自动保存同步更新历史快照，重启不恢复旧卡片", async () => {
+  setProjectPath("/proj/A")
+  useLintRunStore.getState().update("/proj/A", { ...DEFAULT_LINT_RUN, hasRun: true, paused: true, progress: { completed: 3, total: 58 } })
+  useLintStore.setState({ items: [] })
+  await flushAndSuspendAutoSave()
+  expect(saveLintRunHistory).toHaveBeenCalledWith("/proj/A", expect.objectContaining({ paused: true, progress: { completed: 3, total: 58 } }), [])
 })

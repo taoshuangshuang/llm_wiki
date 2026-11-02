@@ -14,6 +14,14 @@ function config(provider: LlmConfig["provider"], model: string): LlmConfig {
 }
 
 describe("reasoning capabilities", () => {
+  it("Flash 仅在智谱官方接口启用支持的推理档位，未知网关仍不推断协议", () => {
+    const cfg = { ...config("custom", "GLM-5.3-Flash"), customEndpoint: "https://open.bigmodel.cn/api/paas/v4" }
+    expect(normalizeReasoningForProvider(cfg, { mode: "off" })).toEqual({ mode: "low" })
+    expect(resolveReasoningCapabilities(cfg).modes).toEqual(["auto", "low", "high", "max"])
+    expect(resolveReasoningCapabilities({ ...cfg, customEndpoint: "https://gateway.example/v1" }).modes).toEqual(["auto"])
+    expect(resolveReasoningCapabilities({ ...cfg, apiMode: "anthropic_messages" }).modes).toEqual(["auto"])
+  })
+
   it("官方 GLM-5.3 按能力映射旧设置，并保留用户要求的较高思考预算", () => {
     const cfg = { ...config("custom", "GLM-5.3"), customEndpoint: "https://open.bigmodel.cn/api/paas/v4" }
     expect(resolveReasoningCapabilities(cfg).modes).toEqual(["auto", "low", "high", "max"])

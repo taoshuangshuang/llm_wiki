@@ -3,7 +3,6 @@ import { resetProjectState } from "./reset-project-state"
 import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useActivityStore } from "@/stores/activity-store"
-import { useResearchStore } from "@/stores/research-store"
 import { getQueue, pauseQueue } from "./ingest-queue"
 
 // Dynamic-import mocks: resetProjectState uses `import("@/lib/ingest-queue")`
@@ -101,25 +100,6 @@ describe("resetProjectState — Zustand stores", () => {
     expect(useActivityStore.getState().items).toEqual([])
   })
 
-  it("clears research store tasks and closes panel", async () => {
-    useResearchStore.setState({
-      tasks: [
-        {
-          id: "t1",
-          type: "gap",
-          topic: "x",
-          searchQueries: [],
-          status: "pending",
-          createdAt: 0,
-        } as unknown as ReturnType<typeof useResearchStore.getState>["tasks"][number],
-      ],
-      panelOpen: true,
-    })
-
-    await resetProjectState()
-    expect(useResearchStore.getState().tasks).toEqual([])
-    expect(useResearchStore.getState().panelOpen).toBe(false)
-  })
 })
 
 describe("resetProjectState — module-level caches are awaited", () => {
