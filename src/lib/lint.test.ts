@@ -125,6 +125,24 @@ describe("runStructuralLint — link suggestions", () => {
     })
   })
 
+  it("[[页面#锚点]] 按页面部分校验：目标存在不报失效，目标缺失只报页面部分", async () => {
+    const pages = [
+      makeFileNode("others/工单分析-2025.3统计与结论.md", "---\ntitle: 工单分析-2025.3 统计与结论\n---\n# 工单分析-2025.3 统计与结论\n## 主要发现\n内容。"),
+      makeFileNode("others/202602-元数据工单月度汇总.md", "# 月度汇总\n见 [[工单分析-2025.3统计与结论#主要发现]] 与 [[工单分析-2025.3统计与结论#不存在的章节|别名]]，以及 [[不存在的页面#任意锚点]]。"),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => pages.find((p) => p.node.path === path)?.content ?? "")
+
+    const results = await runStructuralLint("/project")
+    const broken = results.filter((result) => result.type === "broken-link")
+
+    expect(broken).toHaveLength(1)
+    expect(broken[0]).toMatchObject({ page: "others/202602-元数据工单月度汇总.md", brokenTarget: "不存在的页面" })
+    expect(broken[0].detail).toContain("[[不存在的页面]]")
+    expect(broken[0].detail).not.toContain("任意锚点")
+    expect(results.some((result) => result.type === "orphan" && result.page === "others/工单分析-2025.3统计与结论.md")).toBe(false)
+  })
+
   it("suggests related pages for orphan and no-outlinks findings", async () => {
     const pages = [
       makeFileNode("rag.md", "# RAG\nRetrieval augmented generation uses vector search."),

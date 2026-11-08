@@ -110,6 +110,8 @@ struct AgentLoopAction {
     #[serde(default)]
     path: Option<String>,
     #[serde(default)]
+    pages: Option<Vec<Value>>,
+    #[serde(default)]
     to_path: Option<String>,
     #[serde(default)]
     expected_revision: Option<String>,
@@ -1781,7 +1783,7 @@ impl AgentRuntime {
                                 wiki_read_key = Some((key, revision));
                             }
                         }
-                    } else if !executed_retrievals.insert(signature) {
+                    } else if tool != "wiki.read_pages" && !executed_retrievals.insert(signature) {
                         observations.push(record_loop_tool_rejection(
                             tool,
                             "duplicate retrieval skipped; reuse the existing observation and continue remaining authorized work"
@@ -1793,13 +1795,16 @@ impl AgentRuntime {
                         continue;
                     }
                 }
-                if retrieval_stopped || retrieval_steps >= MAX_AGENT_RETRIEVAL_STEPS {
+                let retrieval_cost = if tool == "wiki.read_pages" {
+                    action.pages.as_ref().map_or(1, |pages| pages.len().clamp(1, 4))
+                } else { 1 };
+                if retrieval_stopped || retrieval_steps + retrieval_cost > MAX_AGENT_RETRIEVAL_STEPS {
                     observations.push(record_loop_tool_rejection(tool,
                         "检索预算已用完或连续检索无新增证据；请使用已有观察继续已授权修改，或报告证据缺口。不可再检索。".into(),
                         &mut tool_events, &mut events, &event_sink));
                     continue;
                 }
-                retrieval_steps += 1;
+                retrieval_steps += retrieval_cost;
             }
 
             let observation = self
@@ -2238,6 +2243,7 @@ impl AgentRuntime {
             "source.read_file" => Ok(json!({ "path": action.path, "startLine": action.start_line, "endLine": action.end_line,
                 "startColumn": action.start_column, "maxChars": action.max_chars, "revision": action.revision })),
             "wiki.move_page" => Ok(json!({ "path": action.path, "toPath": action.to_path, "expectedRevision": action.expected_revision })),
+            "wiki.read_pages" => Ok(json!({ "pages": action.pages })),
             "wiki.read_page" => Ok(json!({ "path": action.path, "startLine": action.start_line,
                 "endLine": action.end_line, "startColumn": action.start_column,
                 "maxChars": action.max_chars, "revision": action.revision })),
@@ -2354,6 +2360,18 @@ impl AgentRuntime {
                     })
                     .count();
                 Ok(format!("{count} result(s), {added} new; {retrieval_summary}"))
+            }
+            "wiki.read_pages" => {
+                let pages = value.get("pages").and_then(Value::as_array).ok_or("Invalid wiki.read_pages result")?;
+                let mut summaries = Vec::with_capacity(pages.len());
+                for page in pages {
+                    if let Some(error) = page.get("error").and_then(Value::as_str) {
+                        summaries.push(format!("failed read {}: {error}", page["path"]));
+                    } else {
+                        summaries.push(self.record_loop_tool_success("wiki.read_page", page.clone(), references, events, event_sink)?);
+                    }
+                }
+                Ok(summaries.join("\n\n"))
             }
             "wiki.read_page" => {
                 let path = value
@@ -2952,6 +2970,7 @@ fn is_agent_retrieval_tool(tool: &str) -> bool {
         tool,
         "wiki.search"
             | "wiki.read_page"
+            | "wiki.read_pages"
             | "source.read_file"
             | "source.search"
             | "graph.search"
@@ -3001,6 +3020,9 @@ fn retrieval_added_evidence(
 ) -> bool {
     if reference_count_after > reference_count_before {
         return true;
+    }
+    if tool == "wiki.read_pages" {
+        return summary.lines().any(|line| line.starts_with("read "));
     }
     if matches!(tool, "wiki.read_page" | "source.read_file") {
         return summary
@@ -3153,6 +3175,7 @@ fn build_agent_loop_user(
             out.push_str("- wiki.list_pages: 按 prefix 列举所有匹配页面，使用 offset/limit 分页；后续分页传 snapshot。只有 truncated=false 才列完，不能把搜索召回当作全部副本。\n");
             out.push_str("- wiki.move_page: 仅执行用户明确授权的移动或重命名，传 path/toPath，并优先携带读取源页得到的 expectedRevision。迁移引用与索引；toPath 已存在时拒绝覆盖，须如实报告 warnings 和 indexingPendingPaths。\n");
             out.push_str("- wiki.search: retrieve wiki pages for factual or topical questions.\n");
+            out.push_str("- wiki.read_pages: 需要核对多个已知页面时优先批量读，一次传 pages=[{path,...范围参数},{path,...}]，最多4页，每页最多6000字符。逐页返回 revision、truncated、续读游标或 error；只根据成功读取的正文判断，截断页按游标继续读取。不同页面无需互相依赖的读取应放在同一批中。\n");
             out.push_str("- wiki.read_page: 按精确 path 读取原文，支持 startLine/endLine/startColumn/maxChars（最多12000）。返回实际行列、revision、totalLines、truncated 与 nextStartLine/nextStartColumn。长文按接续位置读并传相同 revision，勿重复同一段或把部分正文当作全文。\n");
             out.push_str("- source.search: search raw source snippets.\n");
             out.push_str("- graph.search: retrieve relationships, neighbors, backlinks, dependencies, and connections between entities. Prefer it for relational questions and query with concise entity or concept names.\n");
@@ -3315,6 +3338,7 @@ fn is_agent_loop_tool_name(value: &str) -> bool {
         value,
         "wiki.search"
             | "wiki.read_page"
+            | "wiki.read_pages"
             | "wiki.write_page"
             | "wiki.patch_page"
             | "wiki.delete_page"
@@ -3572,7 +3596,7 @@ fn render_observations(observations: &[AgentObservation]) -> String {
                 observation.tool,
                 match observation.tool.as_str() {
                     // 范围读取已自行限额，不再二次截断，否则游标与实际交付正文将不一致。
-                    "wiki.read_page" | "source.read_file" => observation.summary.clone(),
+                    "wiki.read_page" | "wiki.read_pages" | "source.read_file" => observation.summary.clone(),
                     _ => trim_chars(&observation.summary, 8_000),
                 }
             )
@@ -3583,6 +3607,9 @@ fn render_observations(observations: &[AgentObservation]) -> String {
 
 fn summarize_tool_input(tool: &str, input: &Value) -> Option<String> {
     match tool {
+        "wiki.read_pages" => input.get("pages").and_then(Value::as_array).map(|pages| {
+            pages.iter().filter_map(|page| page["path"].as_str()).collect::<Vec<_>>().join("、")
+        }),
         "wiki.search" | "source.search" | "graph.search" | "web.search" | "anytxt.search" => input
             .get("query")
             .and_then(Value::as_str)
@@ -3707,7 +3734,7 @@ fn require_tool_permission(
     if request.retrieval_mode == AgentRetrievalMode::Faithful
         && matches!(
             tool,
-            "wiki.search" | "wiki.read_page" | "wiki.list_pages" | "graph.search" | "web.search" | "anytxt.search"
+            "wiki.search" | "wiki.read_page" | "wiki.read_pages" | "wiki.list_pages" | "graph.search" | "web.search" | "anytxt.search"
         )
     {
         return Err(format!(
@@ -3721,7 +3748,7 @@ fn require_tool_permission(
             }
             permission_policy.require(AgentCapability::SearchWiki)
         }
-        "wiki.read_page" | "wiki.list_pages" | "graph.search" => {
+        "wiki.read_page" | "wiki.read_pages" | "wiki.list_pages" | "graph.search" => {
             if !request.tools.wiki {
                 return Err(format!("{tool} is disabled for this turn"));
             }
@@ -5306,6 +5333,68 @@ mod tests {
         let config = serde_json::from_value(json!({"provider":"custom","model":"test",
             "customEndpoint":endpoint,"streamingEnabled":false})).unwrap();
         (config, worker)
+    }
+
+    /// 两个已知页面只需一次工具决策和一次结论请求，下一轮同时获得两页正文与版本。
+    #[tokio::test]
+    async fn batch_read_delivers_two_pages_in_two_model_requests() {
+        let project = temp_project("batch-read-loop");
+        let a = "wiki/concepts/a.md";
+        let b = "wiki/concepts/b.md";
+        fs::write(project.join(a), "# 页面甲\n甲的证据\n").unwrap();
+        fs::write(project.join(b), "# 页面乙\n乙的证据\n").unwrap();
+        let (config, worker) = scripted_agent_model(vec![
+            json!({"action":"tool","tool":"wiki.read_pages","pages":[{"path":a},{"path":b}]}),
+            json!({"action":"final","answer":"两页已核对。"}),
+        ]);
+        let runtime = AgentRuntime::new("test", project.to_string_lossy(), None, Some(config), None, None);
+        let response = runtime.run_once(AgentChatRequest {
+            message: "核对两页，不修改。".into(), ..Default::default()
+        }).await.unwrap();
+        let prompts = worker.join().unwrap();
+        assert_eq!(prompts.len(), 2);
+        let next_prompt = prompts[1]["messages"][1]["content"].as_str().unwrap();
+        for evidence in ["甲的证据", "乙的证据", "sha256:", "\"truncated\":false"] {
+            assert!(next_prompt.contains(evidence), "缺少批量证据：{evidence}");
+        }
+        assert_eq!(response.message, "两页已核对。");
+        assert!(response.tool_events.iter().any(|event| event.tool == "wiki.read_pages" && event.status == "completed"));
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    /// 批量读取仍按实际页数计费检索预算，不能通过多页工具放大原有二十次上限。
+    #[tokio::test]
+    async fn batch_read_charges_each_page_against_retrieval_budget() {
+        let project = temp_project("batch-read-budget");
+        let path = "wiki/concepts/evidence.md";
+        fs::write(project.join(path), "# 证据\n可读正文\n").unwrap();
+        let batch = json!({"action":"tool","tool":"wiki.read_pages","pages":vec![json!({"path":path});4]});
+        let mut actions = vec![batch; 6];
+        actions.push(json!({"action":"final","answer":"使用已有证据收尾。"}));
+        let (config, worker) = scripted_agent_model(actions);
+        let runtime = AgentRuntime::new("test", project.to_string_lossy(), None, Some(config), None, None);
+        let response = runtime.run_once(AgentChatRequest {
+            message: "核对页面证据。".into(), ..Default::default()
+        }).await.unwrap();
+        let prompts = worker.join().unwrap();
+        assert_eq!(prompts.len(), 7);
+        assert_eq!(response.tool_events.iter().filter(|event| event.tool == "wiki.read_pages" && event.status == "completed").count(), 5);
+        assert!(response.tool_events.iter().any(|event| event.tool == "wiki.read_pages" && event.status == "failed"));
+        assert!(prompts[6]["messages"][1]["content"].as_str().unwrap().contains("检索预算已用完"));
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    /// 批量读取沿用单页权限：Wiki 禁用及忠实来源模式下都不能读取 Wiki 正文。
+    #[test]
+    fn batch_read_respects_wiki_permissions() {
+        let policy = PermissionPolicy::api_default();
+        let mut request = AgentChatRequest::default();
+        assert!(require_tool_permission("wiki.read_pages", &request, &policy).is_ok());
+        request.tools.wiki = false;
+        assert!(require_tool_permission("wiki.read_pages", &request, &policy).unwrap_err().contains("disabled"));
+        request.tools.wiki = true;
+        request.retrieval_mode = AgentRetrievalMode::Faithful;
+        assert!(require_tool_permission("wiki.read_pages", &request, &policy).unwrap_err().contains("faithful-source mode"));
     }
 
     /// 长文尾部通过行范围完整进入模型，局部补丁保留前文并返回新版本和变更事件。

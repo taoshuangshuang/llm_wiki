@@ -36,8 +36,8 @@ describe("入库后的全库引用维护", () => {
 
   it("章节检查识别行内代码标题、Markdown 锚点和块定位，忽略代码示例", () => {
     const content = "# B\n## 参数 `tenantId`\n## 参数 `tenantId`\n另一个章节\n---\n内容。 ^block\n```md\n## 示例章节\n```"
-    for (const anchor of ["参数 tenantId", "参数-tenantid", "参数-tenantid-1", "另一个章节", "^block"]) expect(hasWikiSection(content, anchor)).toBe(true)
-    expect(hasWikiSection(content, "示例章节")).toBe(false)
+    for (const anchor of ["参数 tenantId", "参数-tenantid", "参数-tenantid-1", "另一个章节", "^block", "参数　TenantID", " 参数tenantid ", "#另一个章节#", "%E5%8F%A6%E4%B8%80%E4%B8%AA%E7%AB%A0%E8%8A%82"]) expect(hasWikiSection(content, anchor)).toBe(true)
+    for (const anchor of ["示例章节", "", "#", "参数"]) expect(hasWikiSection(content, anchor)).toBe(false)
   })
   it("维护历史入链和 related，保留存在的章节、别名，缺失章节退回页面，并跳过代码", async () => {
     const before = markdown("历史", "[[A#保留章节|说明]] [[wiki/concepts/A.md#已移除|旧说明]] [[X]]\n`[[A]]`\n```md\n[[A]]\n```", "[A]")
@@ -88,13 +88,14 @@ describe("入库后的全库引用维护", () => {
     for (const path of [history, second]) expect(await readFileRaw(`${project.path}/${path}`)).toContain("[[B]]")
   })
 
-  it("未知目标照常保留，格式阶段报告缺页和缺章节，同页同目标去重且有效章节不误报", async () => {
-    const text = markdown("历史", "[[X]] [[X]] [[B#保留章节]] [[B#不存在]] [[#当前章节]]\n## 当前章节\n`[[示例]]`", "[X]")
+  it("未知目标照常保留，格式阶段只报告缺页；缺章节降级为整页链接，同页同目标去重且有效章节不误报", async () => {
+    const text = markdown("历史", "[[X]] [[X]] [[X#任意锚点]] [[B#保留章节]] [[B#保留 章节|别名]] [[B#不存在]] [[#当前章节]]\n## 当前章节\n`[[示例]]`", "[X]")
     await writeFileRaw(`${project.path}/${history}`, text)
     const material = { id: "after", path: history, text, revision: await contentRevision(text), startLine: 1, endLine: text.split("\n").length }
     const issues = await inspectWikiReferences(project.path, [material])
-    expect(issues).toHaveLength(2)
-    expect(issues.map((issue) => issue.pageEvidence)).toEqual(["X", "B#不存在"])
+    expect(issues).toHaveLength(1)
+    expect(issues.map((issue) => issue.pageEvidence)).toEqual(["X"])
+    expect(issues[0].description).toBe("失效引用 [[X]]：目标页面不存在或名称不唯一")
     expect(issues.every((issue) => issue.manual)).toBe(true)
     expect(await readFileRaw(`${project.path}/${history}`)).toBe(text)
     // 缺失引用进入格式审阅，但不得进入自动格式修复或补页链路。

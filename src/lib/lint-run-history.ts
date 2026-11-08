@@ -39,7 +39,7 @@ export async function loadLintRunHistory(path: string): Promise<LintRunHistory |
         || run.progress.completed < 0 || run.progress.total < run.progress.completed))) {
       throw new Error("检查任务历史格式无效，未恢复进度")
     }
-    return { ...history, items: restoreItemTypes(history.items), run: { ...run, running: false, pausing: false, paused: run.running || run.pausing || run.paused, hasRun: true } }
+    return { ...history, items: restoreItemTypes(history.items), run: { ...run, running: false, pausing: false, paused: run.running || run.pausing || run.paused, hasRun: run.hasRun || run.running || run.pausing || run.paused } }
   }
   const saved = restoreItemTypes(await loadLintItems(path))
   const checkpoints = await loadWikiReviewCheckpoints(path)

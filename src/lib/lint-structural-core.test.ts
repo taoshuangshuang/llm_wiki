@@ -33,6 +33,17 @@ describe("computeStructuralLint", () => {
     ])
   })
 
+  it("缺失页面的多个章节链接合并为一条，描述与修复目标只保留页面部分", () => {
+    const pages = [
+      { ...page(0, 2), outlinks: ["missing#一", "missing#二", "missing"] },
+      { ...page(1, 2), outlinks: ["entities/page-0"] },
+    ]
+    const broken = computeStructuralLint(pages).filter((item) => item.type === "broken-link")
+    expect(broken).toHaveLength(1)
+    expect(broken[0].brokenTarget).toBe("missing")
+    expect(broken[0].detail).toBe("Broken link: [[missing]] — target page not found.")
+  })
+
   it("finds typo candidates without scanning unrelated page names", () => {
     const pages = [
       { ...page(0, 2), shortName: "transformer.md", slug: "transformer", title: "Transformer", outlinks: [] },

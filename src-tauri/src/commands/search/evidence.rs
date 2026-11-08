@@ -218,7 +218,7 @@ fn lexical_candidates(_request: &Request, pages: &BTreeMap<String, Page>, query:
         (score > 0.0).then(|| (page.path.clone(), score))
     }).collect::<Vec<_>>();
     scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    scored.into_iter().take(5).enumerate().map(|(index, (path, _))| Candidate { path, rank: index + 1, channel: "keyword".into(), quote: None }).collect()
+    scored.into_iter().take(8).enumerate().map(|(index, (path, _))| Candidate { path, rank: index + 1, channel: "keyword".into(), quote: None }).collect()
 }
 
 /// 各通道共用的正文候选范围；索引页保留在页面集合中用于导航，但不参与正文召回。
@@ -239,7 +239,7 @@ fn indexed_candidates(pages: &BTreeMap<String, Page>, query: &str, scope: &Scope
     }).collect::<Vec<_>>();
     candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let mut seen = BTreeSet::new();
-    candidates.into_iter().filter(|(path, _)| seen.insert(path.clone())).take(5).enumerate()
+    candidates.into_iter().filter(|(path, _)| seen.insert(path.clone())).take(8).enumerate()
         .map(|(index, (path, _))| Candidate { path, rank: index + 1, channel: "indexPage".into(), quote: None }).collect()
 }
 
@@ -395,7 +395,7 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
                         else if let Some(config) = embedding_config.as_ref() { tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), fetch_embedding_with_retry(&target.text, config, 0)).await.map_err(|_| "向量召回达到时间预算".to_string()).and_then(|result| result) }
                         else { Err("Embedding 未配置".to_string()) };
                     match vector {
-                        Ok(vector) => match vectorstore::vector_search_chunks(request.project_path.clone(), vector, 5).await {
+                        Ok(vector) => match vectorstore::vector_search_chunks(request.project_path.clone(), vector, 8).await {
                             Ok(chunks) => {
                                 let mut seen = BTreeSet::new();
                                 for chunk in chunks {
@@ -413,10 +413,10 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
                     }
                 }
                 "graph" => {
-                    let mut seeds: BTreeSet<String> = candidates.iter().map(|entry| entry.path.clone()).take(5).collect();
+                    let mut seeds: BTreeSet<String> = candidates.iter().map(|entry| entry.path.clone()).take(8).collect();
                     if seeds.is_empty() {
                         let tokens = tokenize_query(&target.text);
-                        seeds.extend(pages.values().filter(|page| in_scope(&page.path, &scope) && token_match_score(&page.title, &tokens) > 0).take(5).map(|page| page.path.clone()));
+                        seeds.extend(pages.values().filter(|page| in_scope(&page.path, &scope) && token_match_score(&page.title, &tokens) > 0).take(8).map(|page| page.path.clone()));
                         candidates.extend(seeds.iter().enumerate().map(|(index, path)| Candidate { path: path.clone(), channel: "graph".into(), rank: index + 1, quote: None }));
                     }
                     let mut neighbors = BTreeSet::new();
@@ -434,7 +434,7 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
                     let tokens = tokenize_query(&target.text);
                     let mut ranked: Vec<_> = neighbors.into_iter().filter_map(|path| { let score = token_match_score(&pages[&path].text, &tokens); (score > 0).then_some((path, score)) }).collect();
                     ranked.sort_by(|a, b| b.1.cmp(&a.1));
-                    candidates.extend(ranked.into_iter().take(5).enumerate().map(|(index, (path, _))| Candidate { path, channel: "graph".into(), rank: index + 1, quote: None }));
+                    candidates.extend(ranked.into_iter().take(8).enumerate().map(|(index, (path, _))| Candidate { path, channel: "graph".into(), rank: index + 1, quote: None }));
                 }
                 _ => {}
             } }
@@ -453,7 +453,7 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
         for candidate in &candidates { if voted.insert((candidate.path.clone(), candidate.channel.clone())) { *scores.entry(candidate.path.clone()).or_default() += 1.0 / (RRF_K + candidate.rank as f64); } }
         let mut ranked: Vec<_> = scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        // 标题候选有独立名额，先展开完整正文；不能在融合后被普通片段的前五名再次淘汰。
+        // 标题候选有独立名额，先展开完整正文；不能在融合后被普通片段的前八名再次淘汰。
         let title_paths: Vec<_> = candidates.iter().filter(|entry| entry.channel == "title").map(|entry| entry.path.clone()).collect();
         let expansion_paths: Vec<_> = title_paths.iter().cloned().chain(ranked.iter().filter(|(path, _)| !title_paths.contains(path)).map(|(path, _)| path.clone())).collect();
         let target_budget = remaining / (request.targets.len() - target_index).max(1);
@@ -463,7 +463,7 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
         let mut ordinary_ids = 0;
         for path in expansion_paths {
             let is_title = title_paths.contains(&path);
-            if !is_title && ordinary_ids >= 5 { break; }
+            if !is_title && ordinary_ids >= 8 { break; }
             if Instant::now() >= deadline { target_failed = true; reached.push("timeLimit".into()); break; }
             let Some(page) = pages.get(&path) else { continue; };
             let current = read_evidence_text(&Path::new(&request.project_path).join(&path), corpus)?.unwrap_or_default();
@@ -482,7 +482,7 @@ async fn retrieve_with_trace(request: Request, embedding_config: Option<SearchEm
                 "remainingChars":target_budget.saturating_sub(consumed),"segments":segments,"returnedRanges":ranges.len()})); }
             if ranges.is_empty() { warnings.push(format!("候选正文未能在本次预算内展开：{path}")); target_failed = true; }
             for (start, end, text) in ranges {
-                if !is_title && ordinary_ids >= 5 { break; }
+                if !is_title && ordinary_ids >= 8 { break; }
                 consumed += text.chars().count();
                 let id = format!("{}:{start}:{end}", page.revision);
                 let id = format!("{}-{id}", path);
@@ -546,7 +546,7 @@ mod tests {
             let recalled = evidence.iter().find(|entry| entry["path"] == old_path).expect("标题相近的旧页必须进入核对材料");
             assert_eq!(recalled["text"], old);
             assert!(recalled["retrievalSources"].as_array().unwrap().iter().any(|source| source["channel"] == "title"));
-            assert_eq!(evidence.iter().filter(|entry| entry["path"].as_str().unwrap().contains("noise-")).count(), 5);
+            assert_eq!(evidence.iter().filter(|entry| entry["path"].as_str().unwrap().contains("noise-")).count(), 8);
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -655,7 +655,7 @@ mod tests {
             let mut expected: Vec<_> = pages.values().filter_map(|page| score_file("/project", &root.join(&page.path), &page.text, &tokens, &phrase, query, false).map(|hit| (page.path.clone(), hit.score))).collect();
             expected.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             let actual = lexical_candidates(&request, &pages, query, &Scope::default(), Instant::now() + Duration::from_secs(10));
-            assert_eq!(actual.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>(), expected.into_iter().take(5).map(|entry| entry.0).collect::<Vec<_>>(), "{query}");
+            assert_eq!(actual.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>(), expected.into_iter().take(8).map(|entry| entry.0).collect::<Vec<_>>(), "{query}");
         }
     }
 
@@ -763,7 +763,7 @@ mod tests {
         assert_eq!(result["status"], "completed");
         for target in result["targetResults"].as_array().unwrap() {
             assert_eq!(target["status"], "matched");
-            assert!(target["evidenceIds"].as_array().unwrap().len() <= 5);
+            assert!(target["evidenceIds"].as_array().unwrap().len() <= 8);
         }
         for evidence in result["evidence"].as_array().unwrap() {
             let text = fs::read_to_string(root.join(evidence["path"].as_str().unwrap())).unwrap();

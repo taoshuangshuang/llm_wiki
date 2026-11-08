@@ -36,6 +36,20 @@ describe("文件名引用约定", () => {
     expect(normalizeWikiFileLinks("[[查询边界.md#范围]]", paths, new Map([["查询边界", "wiki/concepts/实际文件.md"]])))
       .toBe("[[查询边界#范围]]")
   })
+
+  // 模型写出的引用与实际文件名常只差空格或大小写，这类引用不应作为失效引用留到审核。
+  it("忽略空格与大小写差异后唯一时改写为实际文件名，并保留锚点与别名", () => {
+    const spaced = ["wiki/cases/工单分析-2025.11 元数据工单记录.md", "wiki/interfaces/BizObject API.md"]
+    expect(normalizeWikiFileLinks("[[工单分析-2025.11元数据工单记录#主要发现|记录]] [[bizobject\u3000api]]", spaced))
+      .toBe("[[工单分析-2025.11 元数据工单记录#主要发现|记录]] [[BizObject API]]")
+    const titles = new Map([["查询 边界 说明", "wiki/concepts/实际文件.md"]])
+    expect(normalizeWikiFileLinks("[[查询边界说明]]", paths, titles)).toBe("[[实际文件]]")
+  })
+
+  it("归一化后仍有多个候选时保持原引用", () => {
+    const ambiguous = [...paths, "wiki/cases/查询 边界.md"]
+    expect(normalizeWikiFileLinks("[[查询边 界]]", ambiguous)).toBe("[[查询边 界]]")
+  })
 })
 
 describe("sanitizeIngestedFileContent", () => {

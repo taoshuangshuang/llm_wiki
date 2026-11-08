@@ -6,6 +6,7 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import { transformImageEmbeds, transformWikilinks } from "@/lib/wikilink-transform"
 import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
+import { findHeadingElement, splitWikilinkTarget } from "@/lib/wikilink-anchor"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { normalizePath } from "@/lib/path-utils"
 import { detectLanguage } from "@/lib/detect-language"
@@ -45,6 +46,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
   const project = useWikiStore((s) => s.project)
   const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
+  const setPendingScrollHeading = useWikiStore((s) => s.setPendingScrollHeading)
 
   // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
   // wikilink pass, otherwise the embed target gets mangled into a
@@ -90,7 +92,6 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
   function handleAnchorClick(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
     if (!href.startsWith("#")) return
     e.preventDefault()
-    if (!wikiRoot) return
     const slug = (() => {
       try {
         return decodeURIComponent(href.slice(1))
@@ -98,8 +99,30 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
         return href.slice(1)
       }
     })()
-    const path = resolveRelatedSlug(projectPathIndex, slug, wikiRoot)
-    if (path) openPathInPreview(path)
+    const { page, anchor } = splitWikilinkTarget(slug)
+    const scrollWithin = (root: ParentNode | null) => {
+      const heading = root && anchor ? findHeadingElement(root, anchor) : null
+      heading?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return !!heading
+    }
+    // `[[#heading]]` stays on the current page.
+    if (!page) {
+      scrollWithin(e.currentTarget.closest(".markdown-document"))
+      return
+    }
+    if (!wikiRoot) return
+    // A file name may itself contain `#`; prefer the full target before splitting.
+    const full = anchor ? resolveRelatedSlug(projectPathIndex, slug, wikiRoot) : null
+    const path = full ?? resolveRelatedSlug(projectPathIndex, page, wikiRoot)
+    if (!path) return
+    const heading = full ? "" : anchor
+    if (filePath && normalizePath(filePath) === normalizePath(path)) {
+      if (heading) scrollWithin(e.currentTarget.closest(".markdown-document"))
+      return
+    }
+    // The target page mounts fresh; it consumes the pending heading once rendered.
+    setPendingScrollHeading(heading ? { path, heading } : null)
+    openPathInPreview(path)
   }
 
   return (

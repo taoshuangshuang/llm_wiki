@@ -5,7 +5,7 @@ import type { ButtonHTMLAttributes } from "react"
 const translated = vi.hoisted(() => ({ t: (key: string) => key }))
 vi.mock("react-i18next", () => ({ useTranslation: () => translated }))
 vi.mock("@/components/ui/button", () => ({ Button: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button> }))
-vi.mock("@/lib/lint", () => ({ runStructuralLint: vi.fn(async () => []), reviewItemsToLint: vi.fn(() => []) }))
+vi.mock("@/lib/lint", () => ({ runStructuralLint: vi.fn(async () => []), reviewItemsToLint: vi.fn(() => []), projectLintFindingsToReview: vi.fn(async (_path: string, findings: unknown[]) => findings) }))
 vi.mock("@/lib/wiki-review", () => ({ runWikiReview: vi.fn() }))
 vi.mock("@/lib/project-schema", () => ({ loadProjectSchema: vi.fn(async () => "") }))
 vi.mock("@/features/business-modules/pages", () => ({ loadModulePages: vi.fn(async () => ({ pages: [], unreadable: [] })) }))
@@ -23,6 +23,8 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useLintRunStore } from "@/stores/lint-run-store"
 import { loadLintRunHistory } from "@/lib/lint-run-history"
+import { useAppDialog } from "@/stores/app-dialog-store"
+import * as fsCommands from "@/commands/fs"
 import { saveLintItems } from "@/lib/persist"
 
 let view: ReactTestRenderer | undefined
@@ -38,6 +40,31 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => view?.unmount()); view = undefined })
 
 describe("Wiki 检查运行结果展示", () => {
+  it("暂停后确认重置，清空进度并切回开始检查；取消确认则保留原状态", async () => {
+    useLintRunStore.getState().update("/project", { paused: true, hasRun: true, runSemantic: true, progress: { completed: 36, total: 64 } })
+    useLintStore.getState().setItems([{ id: "old", type: "semantic", severity: "warning", page: "A.md", detail: "旧检查问题", createdAt: 0 }])
+    const confirm = vi.spyOn(useAppDialog(), "confirm").mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const mkdir = vi.spyOn(fsCommands, "createDirectory").mockResolvedValue()
+    const write = vi.spyOn(fsCommands, "writeFileAtomic").mockResolvedValue()
+    try {
+      await act(async () => { view = create(<LintView />) })
+      const resetButton = () => view!.root.findAllByType("button").find((button) => button.children.includes("lint.resetProgress"))!
+      expect(resetButton().props.disabled).toBe(false)
+      await act(async () => resetButton().props.onClick())
+      expect(useLintRunStore.getState().runs["/project"].paused).toBe(true)
+      expect(useLintStore.getState().items).toHaveLength(1)
+      expect(write).not.toHaveBeenCalled()
+      await act(async () => resetButton().props.onClick())
+      expect(useLintRunStore.getState().runs["/project"]).toMatchObject({ paused: false, hasRun: false, runSemantic: true, progress: null })
+      expect(useLintStore.getState().items).toEqual([])
+      expect(JSON.stringify(view!.toJSON())).not.toContain("lint.resume")
+      expect(view!.root.findAllByType("button").some((button) => button.children.includes("lint.runLint"))).toBe(true)
+      expect(runWikiReview).not.toHaveBeenCalled()
+    } finally {
+      confirm.mockRestore(); mkdir.mockRestore(); write.mockRestore()
+    }
+  })
+
   it("历史读取未结束时切换项目，迟到的进度与问题不覆盖当前项目", async () => {
     let finish!: (value: Awaited<ReturnType<typeof loadLintRunHistory>>) => void
     const deferred = new Promise<Awaited<ReturnType<typeof loadLintRunHistory>>>((resolve) => { finish = resolve })

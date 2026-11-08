@@ -8,6 +8,10 @@ import { beginLlmObservation, type LlmObservation } from "./llm-observer"
 export type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"
 export { isFetchNetworkError } from "./tauri-fetch"
 
+/** 传输层瞬时故障的自动重试次数与间隔；端点返回的错误不在此列。 */
+const TRANSPORT_RETRY_LIMIT = 1
+const TRANSPORT_RETRY_DELAY_MS = 1000
+
 export interface StreamCallbacks {
   onToken: (token: string) => void
   onReasoningToken?: (token: string) => void
@@ -234,6 +238,23 @@ async function streamChatImpl(
   messages: import("./llm-providers").ChatMessage[],
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+  observation?: LlmObservation,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    const outcome = { retryTransport: false }
+    await streamChatOnce(config, messages, callbacks, signal, requestOverrides, observation, attempt, outcome)
+    if (!outcome.retryTransport) return
+    await new Promise((resolve) => setTimeout(resolve, TRANSPORT_RETRY_DELAY_MS))
+    if (signal?.aborted) { callbacks.onDone(); return }
+  }
+}
+
+async function streamChatOnce(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
   /**
    * Wire-agnostic sampling knobs. The provider's buildBody() translates
    * these into its native schema — OpenAI-style wires accept them at
@@ -244,8 +265,17 @@ async function streamChatImpl(
    */
   requestOverrides?: RequestOverrides,
   observation?: LlmObservation,
+  transportAttempt = 0,
+  outcome: { retryTransport: boolean } = { retryTransport: false },
 ): Promise<void> {
   const { onToken, onDone, onError } = callbacks
+  // 瞬时传输故障（连接中途断开、响应体解码失败）只在尚未向调用方交付任何
+  // 内容时重试；已经交付过片段的流不能重放，否则调用方会收到重复内容。
+  const requestTransportRetry = (): boolean => {
+    if (transportAttempt >= TRANSPORT_RETRY_LIMIT || signal?.aborted) return false
+    outcome.retryTransport = true
+    return true
+  }
 
   // Claude Code CLI uses a subprocess transport (stdin/stdout), not
   // HTTP. Dispatch before getProviderConfig — that function throws for
@@ -411,6 +441,7 @@ async function streamChatImpl(
           return
         }
         if (isFetchNetworkError(err)) {
+          if (requestTransportRetry()) return
           onError(new Error("Connection lost while reading the complete response. Try again."))
           return
         }
@@ -424,7 +455,12 @@ async function streamChatImpl(
       return
     }
 
-    const reader = response.body.getReader()
+    let reader: ReadableStreamDefaultReader<Uint8Array>
+    try { reader = response.body.getReader() }
+    catch (err) {
+      onError(new Error(`Response body is not readable: ${err instanceof Error ? err.message : String(err)}`))
+      return
+    }
     let bodySettled = false
     // TextDecoder keeps partial multi-byte state, so it must be scoped to this
     // response rather than shared across concurrent research requests.
@@ -564,6 +600,7 @@ async function streamChatImpl(
         // Stream reader threw a network error mid-response (connection
         // dropped, server closed early, network blip). Same message
         // regardless of whether the webview is WebKit or Chromium.
+        if (contentCharsEmitted === 0 && requestTransportRetry()) return
         onError(new Error("Connection lost during streaming. Try again."))
         return
       }

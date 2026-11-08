@@ -6,7 +6,7 @@ import type { ReviewItem } from "@/stores/review-store"
 
 /** 审阅会话保留问题快照；即使原条目被移除，也能回看核查依据。 */
 export type ReviewConversationContext = Pick<ReviewItem,
-  "id" | "type" | "title" | "description" | "sourcePath" | "affectedPages" | "subtype" | "evidenceVersion" | "evidence" | "outcome" | "risk" | "historical" | "runIds">
+  "id" | "type" | "title" | "description" | "sourcePath" | "affectedPages" | "subtype" | "evidenceVersion" | "evidence" | "outcome" | "risk" | "historical" | "runIds" | "codeAnalysis">
 
 /**
  * An image attached to a user message. Field names mirror the

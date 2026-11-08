@@ -6,7 +6,13 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory, openPathInProject, readFile } from "@/commands/fs"
+import {
+  listDirectory,
+  openPathInProject,
+  readFile,
+  searchSourceContent,
+  type SourceContentHit,
+} from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
@@ -59,6 +65,8 @@ export function SourcesView() {
   const [ingestedIdentities, setIngestedIdentities] = useState<string[]>([])
   const [queueSnapshot, setQueueSnapshot] = useState<IngestTask[]>(() => [...getQueue()])
   const [sourceQuery, setSourceQuery] = useState("")
+  const [contentHits, setContentHits] = useState<SourceContentHit[]>([])
+  const [contentSearchActive, setContentSearchActive] = useState(false)
   /**
    * Path of the source-tree node currently in "click again to
    * confirm delete" state. Lifted up here (rather than living
@@ -102,6 +110,33 @@ export function SourcesView() {
   useEffect(() => {
     setSourceQuery("")
   }, [project?.id])
+
+  // 内容搜索：防抖 300ms 后端关键词匹配，取 top 10。仅名称/路径命中的
+  // 文件由树过滤展示，这里补充"正文包含关键词"的文件。
+  useEffect(() => {
+    const query = sourceQuery.trim()
+    if (!project || !query) {
+      setContentHits([])
+      setContentSearchActive(false)
+      return
+    }
+    let active = true
+    setContentSearchActive(true)
+    const timer = setTimeout(() => {
+      searchSourceContent(project.path, query, 10)
+        .then((hits) => {
+          if (active) setContentHits(hits)
+        })
+        .catch((err) => {
+          console.warn("[sources] content search failed:", err)
+          if (active) setContentHits([])
+        })
+    }, 300)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [project, sourceQuery])
 
   useEffect(() => {
     if (!project) {
@@ -480,6 +515,42 @@ export function SourcesView() {
         </div>
       )}
 
+        {sourceQuery.trim() && contentHits.length > 0 && (
+          <div className="border-b px-4 py-2.5">
+            <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {t("sources.contentMatches", {
+                count: contentHits.length,
+                defaultValue: "内容匹配（前 {{count}} 条）",
+              })}
+            </div>
+            <div className="space-y-1">
+              {contentHits.map((hit) => (
+                <button
+                  key={hit.path}
+                  type="button"
+                  onClick={() =>
+                    void handleOpenSource({ path: hit.path, name: hit.name, is_dir: false })
+                  }
+                  className="block w-full rounded-md px-1 py-1 text-left text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                >
+                  <span className="flex items-center gap-2 font-medium text-foreground">
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{hit.name}</span>
+                  </span>
+                  <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                    {hit.snippet}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {sourceQuery.trim() && contentSearchActive && contentHits.length === 0 && filteredSources.length > 0 && (
+          <div className="border-b px-4 py-2 text-xs text-muted-foreground">
+            {t("sources.noContentMatches", { defaultValue: "没有正文包含该关键词的原始资料" })}
+          </div>
+        )}
+
       <ScrollArea className="min-h-0 flex-1 overflow-hidden">
         {refreshError && (
           <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -688,7 +759,7 @@ function flattenVisibleRows(
   const rows: SourceTreeRow[] = []
   for (const node of sortSourceNodes(nodes)) {
     rows.push({ node, depth })
-    if (node.is_dir && node.children && !(collapsed[node.path] ?? false)) {
+    if (node.is_dir && node.children && !(collapsed[node.path] ?? true)) {
       rows.push(...flattenVisibleRows(node.children, collapsed, depth + 1))
     }
   }
@@ -754,7 +825,7 @@ function SourceTree({
   }, [hasMore, rows.length])
 
   const toggle = (path: string) => {
-    setCollapsed((prev) => ({ ...prev, [path]: !prev[path] }))
+    setCollapsed((prev) => ({ ...prev, [path]: !(prev[path] ?? true) }))
   }
 
   /**
@@ -786,7 +857,7 @@ function SourceTree({
         const isPendingDelete = pendingDeletePath === node.path
         const ingestStatus = sourceStatuses.get(normalizePath(node.path)) ?? "not-ingested"
         if (node.is_dir && node.children) {
-          const isCollapsed = !forceExpanded && (collapsed[node.path] ?? false)
+          const isCollapsed = !forceExpanded && (collapsed[node.path] ?? true)
           return (
             <div key={node.path}>
               <div
@@ -805,7 +876,7 @@ function SourceTree({
                     <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                   )}
                   <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-                  <span className="truncate font-medium">{node.name}</span>
+                  <span className="truncate">{node.name}</span>
                   <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0">
                     {countFiles(node.children)}
                   </span>
@@ -827,13 +898,14 @@ function SourceTree({
         return (
           <div
             key={node.path}
-            className="flex w-full items-center gap-1 rounded-md px-1 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="flex w-full items-center gap-1 rounded-md text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             style={{ paddingLeft: `${depth * 16 + 4}px` }}
           >
             <button
               onClick={() => onOpen(node)}
-              className="flex flex-1 items-center gap-2 truncate px-2 py-1 text-left"
+              className="flex flex-1 items-center gap-1.5 truncate px-1 py-1 text-left"
             >
+              <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
               <FileText className="h-4 w-4 shrink-0" />
               <span className="truncate">{node.name}</span>
               <span

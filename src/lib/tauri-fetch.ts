@@ -111,5 +111,20 @@ export function isFetchNetworkError(err: unknown): boolean {
   // Chromium mid-stream drop
   if (err.message === "Failed to fetch") return true
   if (err.message.includes("network error")) return true
+  // Tauri HTTP plugin (Rust reqwest) rejects body reads with reqwest's
+  // own error strings, e.g. a dropped connection mid-stream surfaces as
+  // "error decoding response body". These are transport failures, not
+  // endpoint errors, and must be classified like the webview shapes
+  // above so callers retry / report a connection problem.
+  const message = err.message.toLowerCase()
+  if (
+    message.includes("error decoding response body") ||
+    message.includes("error sending request") ||
+    message.includes("connection reset") ||
+    message.includes("connection closed") ||
+    message.includes("incomplete message") ||
+    message.includes("unexpected eof") ||
+    message.includes("peer closed connection")
+  ) return true
   return false
 }

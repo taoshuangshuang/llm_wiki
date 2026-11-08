@@ -174,6 +174,42 @@ export async function runStructuralLint(
 
 // ── Semantic lint ─────────────────────────────────────────────────────────────
 
+/** 本地结构发现（孤儿页/无出链）统一落为审阅项，处理动作收敛到审阅视图。 */
+export async function projectLintFindingsToReview(
+  projectPath: string,
+  findings: LintResult[],
+): Promise<LintResult[]> {
+  const { useReviewStore } = await import("@/stores/review-store")
+  const { saveReviewItems } = await import("./persist")
+  const local = findings.filter((item) => item.type === "orphan" || item.type === "no-outlinks")
+  if (local.length === 0) return findings
+  const reviewItems: ReviewItem[] = local.map((item) => ({
+    type: "suggestion",
+    logicalId: `lint:${item.type}:${item.page}`,
+    evidenceVersion: "v1",
+    title: item.type === "orphan" ? `孤儿页：${item.page}` : `页面无出链：${item.page}`,
+    description: item.suggestedSource
+      ? `${item.detail}（建议从 ${item.suggestedSource} 链入）`
+      : item.suggestedTarget
+        ? `${item.detail}（建议链向 ${item.suggestedTarget}）`
+        : item.detail,
+    affectedPages: [`wiki/${item.page}`],
+    options: [
+      { label: "在编辑器中打开", action: `open:${item.page}` },
+      { label: "跳过", action: "Skip" },
+    ],
+  }))
+  await saveReviewItems(projectPath, reviewItems)
+  const store = useReviewStore.getState()
+  store.addItems(reviewItems)
+  const items = store.items
+  const resolvedIds = new Set(items.filter((item) => item.resolved || item.hidden || item.dismissed).map((item) => item.id))
+  const { reviewIdFor } = await import("@/stores/review-store")
+  // 已人工解决的发现不再回到检查列表；审阅项由归并逻辑保留解决状态。
+  return findings.filter((item) => !local.includes(item) ||
+    !resolvedIds.has(reviewIdFor(reviewItems[local.indexOf(item)]!)))
+}
+
 /** 公共审阅事项投影为 Wiki 检查卡片，原始证据及人工状态随卡片保留。 */
 export function reviewItemsToLint(items: ReviewItem[]): LintResult[] {
   return items.map((item) => ({

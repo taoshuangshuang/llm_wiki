@@ -107,6 +107,14 @@
     }
   },
   "editor": {
+    "find": {
+      "title": "Find in file",
+      "placeholder": "Find in current file…",
+      "noResults": "No results",
+      "previous": "Previous (Shift + Enter)",
+      "next": "Next (Enter)",
+      "close": "Close (Esc)"
+    },
     "edit": "Edit",
     "done": "Done",
     "editRaw": "Edit raw Markdown",
@@ -255,6 +263,8 @@
     "searchPlaceholder": "Filter sources by name or path",
     "clearSearch": "Clear source filter",
     "noSearchResults": "No sources match “{{query}}”",
+    "contentMatches": "Content matches (top {{count}})",
+    "noContentMatches": "No source file contains this keyword in its content",
     "filteredSourceCount": "{{count}} of {{total}} sources",
     "sourceCount_plural": "{{count}} sources"
   },
@@ -421,6 +431,9 @@
     "startSearching": "Type to search wiki pages"
   },
   "lint": {
+    "resetProgress": "Reset progress",
+    "resettingProgress": "Resetting…",
+    "resetProgressConfirm": "Clear check progress and the current findings list? The next check will start from the first batch. Saved page edits, check settings, and manual review decisions will be kept.",
     "awaitingIssues": "Check still running. No matching findings received yet.",
     "pause": "Pause",
     "pausing": "Pausing…",
@@ -466,25 +479,14 @@
     "info": "Info",
     "sectionCount": "{{label}} ({{count}})",
     "open": "Open",
-    "fixing": "Fixing...",
-    "fix": "Fix",
-    "fixFailed": "Fix failed: {{error}}",
-    "delete": "Delete",
     "selectAll": "Select all",
     "selectItem": "Select {{page}}",
     "selectedCount": "{{count}} selected",
-    "fixSelected": "Fix selected",
-    "sendSelectedToReview": "Send selected to Review",
     "ignoreSelected": "Ignore selected",
     "openEdit": "Open & Edit",
     "skip": "Skip",
-    "deletePage": "Delete Page",
-    "fixBrokenLink": "Fix broken link in {{page}}",
-    "addCrossRefs": "Add cross-references to {{page}}",
-    "addCrossRefsDescription": "This page has no outbound [[wikilinks]]. Consider adding cross-references to related entities and concepts.",
     "suggestedTarget": "Suggested target: {{page}}",
     "suggestedSource": "Suggested source: {{page}}",
-    "deleteOrphanConfirm": "Delete orphan page \"{{page}}\"?",
     "typeLabels": {
       "orphan": "Orphan Page",
       "broken-link": "Broken Link",
@@ -493,10 +495,13 @@
       "semantic": "Semantic Issue"
     },
     "issues": "{{count}} issue",
-    "issues_plural": "{{count}} issues"
+    "issues_plural": "{{count}} issues",
+    "goToReview": "Go to Review"
   },
   "review": {
     "importance": "Review importance",
+    "typeFilter": "Filter by type",
+    "typeAll": "All",
     "important": "Important",
     "optional": "Non-important",
     "categoryClear": "No review items in this category",

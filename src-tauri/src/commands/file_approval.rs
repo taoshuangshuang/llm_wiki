@@ -326,7 +326,7 @@ pub fn save_human_file(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn save_workflow_file(project_path: String, relative_path: String, expected: Option<String>, contents: String) -> Result<(), String> {
     let parts: Vec<&str> = relative_path.split('/').collect();
-    let valid = matches!(relative_path.as_str(), "purpose.md" | "schema.md" | "page-rules.md" | "business-modules.md")
+    let valid = matches!(relative_path.as_str(), "purpose.md" | "schema.md" | "page-rules.md" | "business-modules.md" | "code-sources.json")
         || (parts.len() == 2 && parts[0] == "prompts" && parts[1].ends_with(".md")
             && !parts[1].starts_with('.') && !parts[1].contains(['\\', ':'])
             && !parts[1].chars().any(char::is_control));
@@ -365,6 +365,9 @@ mod workflow_file_tests {
         assert_eq!(fs::read_to_string(root.join("business-modules.md")).unwrap(), "原始字典");
         save_workflow_file(project.clone(), "business-modules.md".into(), Some("原始字典".into()), "新字典".into()).unwrap();
         save_workflow_file(project.clone(), "prompts/规则.md".into(), None, "提示词".into()).unwrap();
+        save_workflow_file(project.clone(), "code-sources.json".into(), None, "{}".into()).unwrap();
+        assert_eq!(fs::read_to_string(root.join("code-sources.json")).unwrap(), "{}");
+        assert!(save_workflow_file(project.clone(), "code-sources.json".into(), None, "过期源码绑定".into()).is_err());
         assert_eq!(fs::read_to_string(root.join("prompts/规则.md")).unwrap(), "提示词");
         for invalid in ["../outside.md", "prompts/../outside.md", "wiki/page.md", ".llm-wiki/config.md", "prompts/.hidden.md", "prompts/nested/rule.md"] {
             assert!(save_workflow_file(project.clone(), invalid.into(), None, "无效写入".into()).is_err(), "{invalid}");

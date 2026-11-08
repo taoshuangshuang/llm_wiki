@@ -222,6 +222,35 @@ describe("内容冲突检查", () => {
     expect(streamChat).toHaveBeenCalledTimes(2)
   })
 
+  it("原文声明差异但未消解时冲突转待确认，不静默丢弃", async () => {
+    vi.mocked(streamChat).mockImplementation(async (_config, messages, callbacks) => {
+      const verification = String(messages[0].content).includes("事实适用范围复核器")
+      callbacks.onToken(JSON.stringify(verification ? { ...positive, declaredDifference: true } : { issues: [issue] }))
+      callbacks.onDone()
+    })
+    const result = await checkKnowledge(knowledge([page]))
+
+    expect(result.status).toBe("complete")
+    expect(result.issues).toHaveLength(0)
+    expect(result.pending).toHaveLength(1)
+    expect(result.pending![0].title).toBe("批量查询能力冲突")
+    expect(result.pending![0].description).toContain("未消解")
+    expect(streamChat).toHaveBeenCalledTimes(2)
+  })
+
+  it("原文已有消解说明时不生成冲突或待确认事项", async () => {
+    // 即使初筛仍返回冲突，复核的消解结论也必须使该候选退出审核。
+    vi.mocked(streamChat).mockImplementation(async (_config, messages, callbacks) => {
+      const verification = String(messages[0].content).includes("事实适用范围复核器")
+      callbacks.onToken(JSON.stringify(verification ? { ...positive, explainedDifference: true, declaredDifference: true } : { issues: [issue] }))
+      callbacks.onDone()
+    })
+    const result = await checkKnowledge(knowledge([page]))
+    expect(result.status).toBe("complete")
+    expect(result.issues).toEqual([])
+    expect(result.pending ?? []).toEqual([])
+  })
+
   it("复核缺少必要条件时完成执行并保留人工确认事项", async () => {
     vi.mocked(streamChat).mockImplementation(async (_config, messages, callbacks) => {
       callbacks.onToken(JSON.stringify(String(messages[0].content).includes("事实适用范围复核器")

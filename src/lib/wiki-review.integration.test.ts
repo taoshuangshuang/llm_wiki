@@ -13,7 +13,7 @@ import { runWikiReview, loadWikiReviewBatches } from "./wiki-review"
 import { repairWikiReviewIssues } from "./wiki-review-repair"
 import { reviewPageIntroduction } from "./review-checks"
 import { loadLintRunHistory, saveLintRunHistory } from "./lint-run-history"
-import { restoreLintRun, startLintRun } from "./lint-runner"
+import { restoreLintRun, startLintRun, resetLintRun, pauseLintRun } from "./lint-runner"
 import { DEFAULT_LINT_RUN, useLintRunStore } from "@/stores/lint-run-store"
 import { useLintStore } from "@/stores/lint-store"
 import { contentRevision } from "./content-revision"
@@ -53,6 +53,51 @@ beforeEach(async () => {
 afterEach(async () => { await project.cleanup() })
 
 describe("公共材料准备与 Wiki 模块调度", () => {
+  it("暂停后重置并模拟重启，进度和问题不恢复，下一轮重新检查全部批次", async () => {
+    await twoModules()
+    const options = { project: { path: project.path, id: "wiki" }, llmConfig: config,
+      runSemantic: true, config: { ignoreOrphan: false, ignoreNoOutlinks: false, ignorePages: [] },
+      messages: { preparing: "准备检查", incomplete: "未完成", needsModel: "需要模型" } }
+    // 完成第一批后请求暂停，模拟用户截图中的续跑状态。
+    const original = vi.mocked(retrieveEvidence).getMockImplementation()!
+    vi.mocked(retrieveEvidence).mockImplementation(async (request) => {
+      if (request.targets.some((target) => target.path === b)) pauseLintRun(project.path)
+      return original(request)
+    })
+    await startLintRun(options)
+    expect(useLintRunStore.getState().runs[project.path].paused).toBe(true)
+    const beforePage = await readFileRaw(`${project.path}/${a}`)
+    const beforeReview = await loadReviewItems(project.path)
+    await resetLintRun(project.path)
+    expect(useLintStore.getState().items).toEqual([])
+    expect(useLintRunStore.getState().runs[project.path]).toEqual({ ...DEFAULT_LINT_RUN, runSemantic: true })
+    expect(JSON.parse(await readFileRaw(checkpointFile())).modules).toEqual({})
+    expect(await readFileRaw(`${project.path}/${a}`)).toBe(beforePage)
+    expect(await loadReviewItems(project.path)).toEqual(beforeReview)
+    // 重启后依然是初始状态；重置本身不启动模型调用。
+    vi.mocked(retrieveEvidence).mockClear()
+    useLintRunStore.setState({ runs: {} })
+    await restoreLintRun(project.path)
+    expect(useLintRunStore.getState().runs[project.path]).toEqual({ ...DEFAULT_LINT_RUN, runSemantic: true })
+    expect(useLintStore.getState().items).toEqual([])
+    expect(retrieveEvidence).not.toHaveBeenCalled()
+    vi.mocked(retrieveEvidence).mockImplementation(original)
+    await startLintRun(options)
+    expect(recalledPaths()).toEqual(expect.arrayContaining([a, b]))
+    expect(useLintRunStore.getState().runs[project.path]).toMatchObject({ paused: false, progress: { completed: 2, total: 2 } })
+  })
+
+  it("重置非当前知识库只清除目标项目，不影响当前项目的问题和进度", async () => {
+    const current = { ...DEFAULT_LINT_RUN, hasRun: true, progress: { completed: 3, total: 3 } }
+    const item = { id: "current", type: "orphan" as const, severity: "info" as const, page: "B.md", detail: "当前项目问题", createdAt: 0 }
+    useWikiStore.setState({ project: { id: "other", name: "other", path: "/other" } })
+    useLintRunStore.getState().update("/other", current)
+    useLintStore.getState().setItems([item])
+    await resetLintRun(project.path)
+    expect(useLintRunStore.getState().runs["/other"]).toEqual(current)
+    expect(useLintStore.getState().items).toEqual([item])
+  })
+
   it("旧快照恢复时按原始审阅类型更正结构和链接分类，保留卡片身份且不运行检查", async () => {
     const base = { title: "格式说明", description: "需要检查", affectedPages: [a], options: [], resolved: false, createdAt: 1 }
     const reviews: ReviewItem[] = [

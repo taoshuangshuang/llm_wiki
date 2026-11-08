@@ -6,6 +6,8 @@ export interface BusinessModule {
   children: BusinessModule[]
 }
 
+export type BusinessModuleConfig = Omit<BusinessModule, "children"> & { children?: BusinessModuleConfig[] }
+
 export interface ModuleCatalog {
   roots: BusinessModule[]
   byId: Map<string, BusinessModule>
@@ -24,7 +26,28 @@ const UNCLASSIFIED: BusinessModule = {
 
 /** 从独立章节提取唯一 JSON 字典；未配置时返回 null，保持原入库行为。 */
 export function parseModuleCatalog(markdown: string): ModuleCatalog | null {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n")
+  return readCatalog(markdown)?.catalog ?? null
+}
+
+/** 表单允许名称和说明暂时为空，落盘继续使用严格的字典校验。 */
+export function readModuleCatalogDraft(markdown: string): BusinessModuleConfig[] {
+  const parsed = readCatalog(markdown, true)
+  if (!parsed && markdown.trim()) throw new Error("缺少 Business Modules 或业务模块章节。")
+  return parsed?.modules ?? []
+}
+
+/** 只替换字典的 JSON 正文，保留 Markdown 说明、其他章节与换行格式。 */
+export function writeModuleCatalogDraft(markdown: string, modules: BusinessModuleConfig[]): string {
+  const newline = markdown.includes("\r\n") ? "\r\n" : "\n"
+  const block = findModuleBlock(markdown)
+  const json = JSON.stringify({ ...block?.value, version: 1, modules }, null, 2).replace(/\n/g, newline)
+  if (block) return markdown.slice(0, block.start) + json + newline + markdown.slice(block.end)
+  if (markdown.trim()) throw new Error("缺少 Business Modules 或业务模块章节。")
+  return ["## Business Modules", "", '```json', json, '```', ""].join(newline)
+}
+
+function findModuleBlock(markdown: string) {
+  const lines = markdown.match(/[^\n]*\n|[^\n]+$/g) ?? []
   const start = lines.findIndex((line) => /^#{1,6}\s+(?:Business Modules|业务模块)\s*#*\s*$/i.test(line))
   if (start < 0) return null
   const level = lines[start].match(/^#+/)![0].length
@@ -34,29 +57,37 @@ export function parseModuleCatalog(markdown: string): ModuleCatalog | null {
     if (heading && heading[1].length <= level) break
     section.push(line)
   }
-  const blocks = [...section.join("\n").matchAll(/^```json\s*\n([\s\S]*?)^```\s*$/gm)]
+  const blocks = [...section.join("").matchAll(/^(```json\s*\n)([\s\S]*?)^```[^\S\r\n]*(?=\r?$)/gm)]
   if (blocks.length !== 1) throw new Error("业务模块章节必须包含一个 JSON 代码块。")
+  const [block] = blocks
   let value: unknown
   try {
-    value = JSON.parse(blocks[0][1])
+    value = JSON.parse(block[2])
   } catch {
     throw new Error("业务模块 JSON 格式无效。")
   }
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.modules)) {
     throw new Error("业务模块配置必须使用 version: 1 和 modules 数组。")
   }
+  const jsonStart = lines.slice(0, start + 1).join("").length + block.index + block[1].length
+  return { value, modules: value.modules as unknown[], start: jsonStart, end: jsonStart + block[2].length }
+}
+
+function readCatalog(markdown: string, allowBlankText = false) {
+  const block = findModuleBlock(markdown)
+  if (!block) return null
   const byId = new Map<string, BusinessModule>()
-  const roots = value.modules.map((node) => parseNode(node, byId, 0))
+  const roots = block.modules.map((node) => parseNode(node, byId, 0, allowBlankText))
   if (!byId.has(UNCLASSIFIED_ID)) {
     const fallback = { ...UNCLASSIFIED, children: [] }
     roots.push(fallback)
     byId.set(fallback.id, fallback)
   }
-  return { roots, byId }
+  return { catalog: { roots, byId }, modules: block.modules as BusinessModuleConfig[] }
 }
 
 /** 校验配置节点，拒绝重复身份、空分类说明及过深/过大的字典。 */
-function parseNode(value: unknown, byId: Map<string, BusinessModule>, depth: number): BusinessModule {
+function parseNode(value: unknown, byId: Map<string, BusinessModule>, depth: number, allowBlankText: boolean): BusinessModule {
   if (depth > 30 || byId.size >= 1000) throw new Error("业务模块字典超过层级或节点数量限制。")
   if (!isRecord(value)) throw new Error("业务模块节点必须是 JSON 对象。")
   const { id, name, description, children = [] } = value
@@ -64,7 +95,7 @@ function parseNode(value: unknown, byId: Map<string, BusinessModule>, depth: num
     throw new Error("模块 id 必须是稳定的小写英文编码，可包含数字、横线及下划线。")
   }
   if (byId.has(id)) throw new Error(`业务模块 id 重复：${id}`)
-  if (typeof name !== "string" || !name.trim() || typeof description !== "string" || !description.trim()) {
+  if (typeof name !== "string" || typeof description !== "string" || (!allowBlankText && (!name.trim() || !description.trim()))) {
     throw new Error(`模块 ${id} 必须填写 name 和 description。`)
   }
   if (!Array.isArray(children)) throw new Error(`模块 ${id} 的 children 必须是数组。`)
@@ -73,7 +104,7 @@ function parseNode(value: unknown, byId: Map<string, BusinessModule>, depth: num
   }
   const node: BusinessModule = { id, name: name.trim(), description: description.trim(), children: [] }
   byId.set(id, node)
-  node.children = children.map((child) => parseNode(child, byId, depth + 1))
+  node.children = children.map((child) => parseNode(child, byId, depth + 1, allowBlankText))
   return node
 }
 

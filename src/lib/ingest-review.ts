@@ -17,11 +17,13 @@ import { IngestDiagnostics } from "./ingest-diagnostics"
 import { reviewRetrievalContext } from "./ingest-review-materials"
 import { loadReviewItems, saveReviewItems } from "./persist"
 import { withProjectLock } from "./project-mutex"
+import { retireStaleStructureItems } from "./review-structure-retire"
 import { assertIngestSnapshotsUnchanged } from "./ingest-write-guard"
 import { recoverReviewRepair, recoverStageRepairs, repairReviewIssues, deduplicateReviewIssues } from "./ingest-review-repair"
 import { withIngestPipeline } from "./ingest-pipeline"
 import { ensureReviewBatchPlan, reviewBatchError, reviewCorpusIdentity, retrieveReviewBatch, retrievalEvidenceCurrent } from "./ingest-review-batches"
 import type { FileNode } from "@/types/wiki"
+import { createCodeConflictAnalyzer } from "./code-conflict-analysis"
 
 type NewReview = Omit<ReviewItem, "id" | "resolved" | "createdAt">
 type Material = ReviewMaterial
@@ -171,7 +173,7 @@ async function executeIngestReview(projectPath: string, runId: string, config: L
   const rules = { schema, purpose, system: MODEL_RULES, background: prompts.backgroundReview, filter: prompts.review, content: prompts.acceptance }
   await diagnostics.save("review-input.json", { materials, rules, outputLanguage: useWikiStore.getState().outputLanguage })
   const { apiKey: _key, ...modelConfig } = config
-  const rulesRevision = await contentRevision(JSON.stringify({ engineVersion: 14, ...rules, modelConfig, outputLanguage: useWikiStore.getState().outputLanguage }))
+  const rulesRevision = await contentRevision(JSON.stringify({ engineVersion: 15, ...rules, modelConfig, outputLanguage: useWikiStore.getState().outputLanguage }))
   const corpusIdentity = await reviewCorpusIdentity(projectPath)
   signal?.throwIfAborted()
   await updateIngestRun(projectPath, runId, (state) => {
@@ -305,7 +307,11 @@ async function executeIngestReview(projectPath: string, runId: string, config: L
     const items = [...new Map(Object.values(current.review.stepItems).flat().map((item) => [item.id, { ...item, historical }])).values()]
     const currentIds = new Set(items.map((item) => item.id))
     const repairedIds = new Set((current.repairAttempts ?? []).filter((entry) => entry.status === "verified").flatMap((entry) => entry.issues.map((item) => item.id)))
-    const retired = historical ? [] : (await loadReviewItems(projectPath)).filter((item) => repairedIds.has(item.id) && !currentIds.has(item.id)).map((item) => ({ ...item, historical: true }))
+    const stored = historical ? [] : await loadReviewItems(projectPath)
+    const retired: ReviewItem[] = stored.filter((item) => repairedIds.has(item.id) && !currentIds.has(item.id)).map((item) => ({ ...item, historical: true }))
+    // 格式检查完整覆盖了本次写入的页面；这些页面上旧版本报出而本轮未重现的结构事项已过期。
+    const structureChecked = current.review.steps.format?.status === "complete" ? Object.values(current.pages).map((page) => page.path) : []
+    retired.push(...retireStaleStructureItems(stored.filter((item) => !retired.some((entry) => entry.id === item.id)), structureChecked, currentIds))
 
     const localResolutions = useWikiStore.getState().project?.path === projectPath
       ? useReviewStore.getState().items.filter((item) => item.resolutionUpdatedAt) : []
@@ -339,6 +345,7 @@ async function executeKnowledgeBatches(
   if (!batches.length) return { items: [], status: "incomplete", reason: "没有实际知识页，未建立空审阅批次" }
   const reasons: string[] = []
   const collected: ReviewItem[] = []
+  const analyzeCode = createCodeConflictAnalyzer(projectPath, config, signal, diagnostics.process, useWikiStore.getState().outputLanguage)
   const checks = stage === "knowledge" ? [{
     id: "existing-knowledge", types: ["contradiction", "duplicate"],
     task: "一次检查本次实际页面及检索所得相关正文的事实冲突与实质重复；覆盖单页内部、同批页面之间及本批与已有知识之间。冲突保留双方证据，重复说明整页或局部范围、独立用途和独有内容；有事实分歧时只报冲突，不通过去重决定事实取舍",
@@ -402,7 +409,7 @@ async function executeKnowledgeBatches(
               targetPaths: segment.filter((entry) => entry.id.startsWith("after-")).map((entry) => entry.path),
             }
             const result = stage === "knowledge"
-              ? await checkKnowledge({ ...checkOptions, onScopeCheck: async (verdict, evidence) => {
+              ? await checkKnowledge({ ...checkOptions, analyzeCode, onScopeCheck: async (verdict, evidence) => {
                 await updateIngestRun(projectPath, run.runId, (state) => { if (state.review && state.reviewExecutionId === executionId) (state.review.scopeChecks ??= []).push({ verdict, evidence }) })
               } })
               : await checkSupplements(checkOptions)

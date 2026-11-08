@@ -120,6 +120,106 @@ pub async fn search_project(
     .await
 }
 
+const SOURCE_CONTENT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const SOURCE_CONTENT_EXTENSIONS: &[&str] = &[
+    "md", "mdx", "txt", "org", "rst", "json", "jsonl", "ndjson", "yaml", "yml", "csv", "tsv",
+    "html", "htm", "xml", "py", "js", "ts", "jsx", "tsx", "rs", "go", "java", "c", "cpp", "h",
+    "rb", "php", "swift", "sql", "sh",
+];
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceContentHit {
+    pub path: String,
+    pub name: String,
+    pub snippet: String,
+    pub match_count: usize,
+}
+
+/// Keyword-only content search over the raw source files of a project.
+/// Deliberately no vector channel — this powers the sources panel filter,
+/// where the corpus is small and deterministic substring ranking is what
+/// the user expects. Text-like files above the size cap are skipped.
+#[tauri::command]
+pub async fn search_source_content(
+    project_path: String,
+    query: String,
+    top_k: Option<usize>,
+) -> Result<Vec<SourceContentHit>, String> {
+    let top_k = top_k.unwrap_or(10).clamp(1, 50);
+    tokio::task::spawn_blocking(move || search_source_content_inner(&project_path, &query, top_k))
+        .await
+        .map_err(|err| format!("source content search worker failed: {err}"))?
+}
+
+fn search_source_content_inner(
+    project_path: &str,
+    query: &str,
+    top_k: usize,
+) -> Result<Vec<SourceContentHit>, String> {
+    let phrase = trim_query_punctuation(query).to_lowercase();
+    let tokens = tokenize_query(query);
+    if phrase.is_empty() && tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = Path::new(project_path).join("raw/sources");
+    let mut hits: Vec<SourceContentHit> = Vec::new();
+    for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !SOURCE_CONTENT_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.len() > SOURCE_CONTENT_MAX_FILE_BYTES {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lower = content.to_lowercase();
+        let phrase_occ = count_occurrences(&lower, &phrase);
+        let token_score = tokens
+            .iter()
+            .filter(|token| lower.contains(token.as_str()))
+            .count();
+        if phrase_occ == 0 && token_score == 0 {
+            continue;
+        }
+        let score = phrase_occ * 5 + token_score;
+        let anchor = if phrase_occ > 0 {
+            phrase.clone()
+        } else {
+            tokens
+                .iter()
+                .find(|token| lower.contains(token.as_str()))
+                .cloned()
+                .unwrap_or_default()
+        };
+        hits.push(SourceContentHit {
+            path: path.to_string_lossy().to_string(),
+            name: path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            snippet: build_snippet(&content, &anchor),
+            match_count: score,
+        });
+    }
+    hits.sort_by(|a, b| b.match_count.cmp(&a.match_count).then(a.name.cmp(&b.name)));
+    hits.truncate(top_k);
+    Ok(hits)
+}
+
 #[tauri::command]
 pub async fn embedding_fetch(
     text: String,
@@ -321,7 +421,7 @@ pub async fn search_with_evidence(
     let mut token_hits = 0;
     let mut vector_hits = 0;
     let mut graph_hits = 0;
-    for entry in result["evidence"].as_array().into_iter().flatten().take(top_k.clamp(1, 5)) {
+    for entry in result["evidence"].as_array().into_iter().flatten().take(top_k.clamp(1, 8)) {
         let sources = entry["retrievalSources"].as_array().cloned().unwrap_or_default();
         token_hits += usize::from(sources.iter().any(|source| source["channel"] == "keyword"));
         vector_hits += usize::from(sources.iter().any(|source| source["channel"] == "vector"));
@@ -1778,6 +1878,37 @@ mod tests {
         assert_eq!(out.results[0].title, "Phrase");
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn source_content_search_ranks_and_snippets_raw_sources() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "raw/sources/dev/framework.md",
+            "# 框架\n\nMDD 是元数据驱动的开发框架，MDD 强调模型优先。",
+        );
+        write_page(&root, "raw/sources/dev/binary.pdf", "not searchable");
+        write_page(&root, "raw/sources/dev/other.md", "# 无关\n\n内容没有关键词。");
+        write_page(
+            &root,
+            "raw/sources/dev/mention.md",
+            "# 提及\n\n这里只提了一次 MDD。",
+        );
+
+        let hits = search_source_content_inner(
+            root.to_str().unwrap(),
+            "MDD 开发框架",
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(hits.len(), 2);
+        // 短语多次命中的文件排在前面
+        assert!(hits[0].path.ends_with("framework.md"));
+        assert!(hits[0].snippet.contains("MDD"));
+        assert!(hits.iter().all(|hit| !hit.path.ends_with(".pdf")));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn parses_openai_batch_vectors_in_input_order() {
         let response = json!({

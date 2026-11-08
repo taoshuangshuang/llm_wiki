@@ -48,6 +48,10 @@ fn merge_item(previous: &Value, mut incoming: Value) -> Value {
             for (key, value) in old { fields.entry(key.clone()).or_insert_with(|| value.clone()); }
         }
         fields.insert("resolved".to_string(), Value::Bool(resolved));
+        if previous["codeAnalysis"]["checkedAt"].as_i64().unwrap_or(0) > fields.get("codeAnalysis")
+            .and_then(|value| value["checkedAt"].as_i64()).unwrap_or(0) {
+            fields.insert("codeAnalysis".into(), previous["codeAnalysis"].clone());
+        }
         if keep_previous {
             for key in ["resolvedAction", "resolvedEvidenceVersion", "dismissed", "hidden", "resolutionUpdatedAt"] {
                 if let Some(value) = previous.get(key) { fields.insert(key.to_string(), value.clone()); }
@@ -69,6 +73,18 @@ fn merge_item(previous: &Value, mut incoming: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn stale_analysis_save_preserves_newer_code_result_and_resolution() {
+        // 后台旧请求晚到时，保留新核验结论和用户刚完成的处理状态。
+        let current = json!({"resolved":true,"resolvedAction":"人工确认","resolutionUpdatedAt":3,
+            "codeAnalysis":{"checkedAt":20,"summary":"最新取证"}});
+        let stale = json!({"resolved":false,"codeAnalysis":{"checkedAt":10,"summary":"旧取证"}});
+        let saved = merge_item(&current, stale);
+        assert_eq!(saved["codeAnalysis"]["summary"], "最新取证");
+        assert_eq!(saved["resolvedAction"], "人工确认");
+        assert_eq!(saved["resolved"], true);
+    }
 
     #[test]
     fn stale_save_preserves_api_resolution_and_new_evidence_is_independent() {

@@ -212,15 +212,20 @@ export function computeStructuralLint(
         suggestedTarget: relatedCandidate(pageIndex, "target")?.shortName,
       })
     }
+    const brokenPages = new Set<string>()
     for (const link of ignored ? [] : new Set(page.outlinks)) {
       if (link.startsWith("#") || linkedPage(link) !== undefined) continue
+      // 章节部分不影响页面是否存在；同页多个章节链接只报一次，修复建议也只针对页面。
+      const target = link.split("#")[0].trim()
+      if (brokenPages.has(target)) continue
+      brokenPages.add(target)
       results.push({
         type: "broken-link",
         severity: "warning",
         page: page.shortName,
-        detail: `Broken link: [[${link}]] — target page not found.`,
-        brokenTarget: link,
-        suggestedTarget: brokenCandidate(link)?.shortName,
+        detail: `Broken link: [[${target}]] — target page not found.`,
+        brokenTarget: target,
+        suggestedTarget: brokenCandidate(target)?.shortName,
       })
     }
     if (pageIndex % 25 === 0 || pageIndex === pages.length - 1) {

@@ -10,6 +10,7 @@ import { contentRevision } from "./content-revision"
 import { loadProjectSchema } from "./project-schema"
 import { loadProjectIngestPrompts } from "./ingest-prompts"
 import { loadReviewItems, saveReviewItems } from "./persist"
+import { retireStaleStructureItems } from "./review-structure-retire"
 import { checkFormat, checkKnowledge, checkSupplements, prepareReviewMaterials, type ReviewMaterial, type ReviewFinding } from "./review-checks"
 import { isReviewContentPath } from "./review-checks/types"
 import { reviewMaterialSegments } from "./review-checks/segments"
@@ -17,6 +18,7 @@ import { reviewRetrievalContext } from "./ingest-review-materials"
 import { repairWikiReviewIssues } from "./wiki-review-repair"
 import { loadWikiReviewCheckpoints, checkpointDependenciesCurrent, saveWikiModuleCheckpoint, type WikiModuleCheckpoint } from "./wiki-review-checkpoints"
 import type { RetrievalResult } from "./evidence-retrieval"
+import { createCodeConflictAnalyzer } from "./code-conflict-analysis"
 
 export interface WikiReviewProgress { completed: number; total: number; detail: string }
 export interface WikiReviewReport { status: "complete" | "partial" | "incomplete" | "cancelled"; items: ReviewItem[]; reasons: string[]; changedPages?: string[] }
@@ -95,6 +97,7 @@ export async function runWikiReview(projectPath: string, config: LlmConfig, sign
     const knownPaths = loaded.pages.map((page) => page.path)
     const policy = `${prompts.backgroundReview}\n${prompts.review}`
     const common = { policy, llmConfig: config, outputLanguage: useWikiStore.getState().outputLanguage, signal }
+    const analyzeCode = createCodeConflictAnalyzer(projectPath, config, signal, undefined, common.outputLanguage)
     const checkpoints = await loadWikiReviewCheckpoints(projectPath)
     const batches = await Promise.all(loaded.batches.map(async (batch) => ({ ...batch,
       key: await contentRevision(JSON.stringify({ moduleId: batch.moduleId, paths: batch.pages.map((page) => page.path) })),
@@ -119,6 +122,7 @@ export async function runWikiReview(projectPath: string, config: LlmConfig, sign
     const referenceIssues = await inspectWikiReferences(projectPath, loaded.pages)
     const format = checkFormat({ pages: loaded.pages, schema, signal, referenceIssues })
     if (loaded.pages.length && format.status !== "complete") reasons.push(format.reason ?? "格式检查未完成")
+    const structureCheckedPaths = format.status === "complete" ? knownPaths : []
     const formatItems = await Promise.all(format.issues.map(async (issue): Promise<ReviewItem> => {
       const evidence = loaded.pages.filter((page) => issue.pages.includes(page.path))
       const item = await findingItem({ type: "suggestion", title: issue.description, description: issue.description, evidence, affectedPages: issue.pages })
@@ -161,7 +165,7 @@ export async function runWikiReview(projectPath: string, config: LlmConfig, sign
         }
         for (const segment of segments) {
           const targetPaths = segment.filter((page) => page.role === "page").map((page) => page.path)
-          const result = await checkKnowledge({ ...common, materials: segment, targetPaths, context })
+          const result = await checkKnowledge({ ...common, materials: segment, targetPaths, context, analyzeCode })
           if (result.status !== "complete") { complete = false; reasons.push(`${batch.name}：${result.reason ?? "已有知识检查未完成"}`) }
           knowledgeItems.push(...await Promise.all(result.issues.map(findingItem)))
           for (const finding of result.pending ?? []) {
@@ -218,9 +222,12 @@ export async function runWikiReview(projectPath: string, config: LlmConfig, sign
     }
     const changedVersions = new Map<string, string>()
     for (const path of changedPages) changedVersions.set(path, await contentRevision(await readFile(`${projectPath}/${path}`)))
-    const retired = (changedPages.size ? await loadReviewItems(projectPath) : []).filter((item) => !items.has(item.id) && item.evidence?.some((entry) =>
+    const stored = changedPages.size || structureCheckedPaths.length ? await loadReviewItems(projectPath) : []
+    const retired: ReviewItem[] = stored.filter((item) => !items.has(item.id) && item.evidence?.some((entry) =>
       !["before", "source"].includes(entry.snapshot?.side ?? "") && changedVersions.has(entry.path) && changedVersions.get(entry.path) !== entry.revision,
     )).map((item) => ({ ...item, historical: true }))
+    // 本轮格式检查覆盖了全库页面；旧版本报出而本轮未重现的结构事项已过期。
+    retired.push(...retireStaleStructureItems(stored.filter((item) => !retired.some((entry) => entry.id === item.id)), structureCheckedPaths, items.keys()))
     await saveReviewItems(projectPath, [...retired, ...items.values()])
     const saved = await loadReviewItems(projectPath)
     for (const item of saved) if (item.resolved || item.hidden || item.dismissed) items.delete(item.id)

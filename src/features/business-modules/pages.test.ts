@@ -61,7 +61,7 @@ describe("业务模块页面浏览契约", () => {
       read: async () => "---\ntitle: 深层页面\ntype: practice\ntags: [module/a]\n---\nBody",
     })
     expect(visited).toEqual(["/p/wiki", "/p/wiki/nested"])
-    expect(result.pages).toEqual([{ path: "/p/wiki/nested/page.md", title: "深层页面", type: "practice", moduleIds: ["a"] }])
+    expect(result.pages).toEqual([{ path: "/p/wiki/nested/page.md", title: "深层页面", type: "practice", moduleIds: ["a"], taggedModuleIds: ["a"] }])
   })
   it("部分文件不可读时保留其他页面并报告问题", async () => {
     const result = await loadModulePages("/p", catalog, {

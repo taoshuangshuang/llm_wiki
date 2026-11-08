@@ -420,6 +420,8 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
+  /** Heading a `[[page#heading]]` click wants the given wiki page to scroll to once rendered. */
+  pendingScrollHeading: { path: string; heading: string } | null
   activeView: "chat" | "wiki" | "sources" | "imports" | "search" | "graph" | "lint" | "review" | "skills" | "settings" | "workflow"
   llmConfig: LlmConfig
   /** Persisted global/default config, kept separate while a project override is effective. */
@@ -455,8 +457,10 @@ interface WikiState {
   closePreview: () => void
   setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
+  setPendingScrollHeading: (target: { path: string; heading: string } | null) => void
   reviewRunFilter: string | null
   reviewImportanceFilter: "important" | "optional"
+  reviewTypeFilter: string
   setActiveView: (view: WikiState["activeView"]) => void
   setLlmConfig: (config: LlmConfig) => void
   setGlobalLlmConfig: (config: LlmConfig) => void
@@ -491,9 +495,11 @@ export const useWikiStore = create<WikiState>((set) => ({
   externalPreview: null,
   previewReturnView: null,
   pendingScrollImageSrc: null,
+  pendingScrollHeading: null,
   activeView: "wiki",
   reviewRunFilter: null,
   reviewImportanceFilter: "important",
+  reviewTypeFilter: "all",
   llmConfig: {
     provider: "openai",
     apiKey: "",
@@ -575,6 +581,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     })),
   setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
+  setPendingScrollHeading: (pendingScrollHeading) => set({ pendingScrollHeading }),
   setActiveView: (activeView) => set({ activeView, previewReturnView: null }),
   searchApiConfig: {
     provider: "none",

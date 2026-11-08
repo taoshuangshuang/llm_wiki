@@ -101,4 +101,17 @@ describe("知识流程项目配置编辑", () => {
     expect(await readFileRaw(path)).toBe("旧规则保留原文")
     expect(await loadWorkflowDocument(project.path, { title: "生成", prompt: "generationTemplate" })).toMatchObject({ path: "prompts/02-01-Wiki页面生成.md" })
   })
+
+  it("源码绑定独立保存，重新读取保留范围，外部修改后拒绝旧草稿覆盖", async () => {
+    project = await createTempProject("workflow-code-sources")
+    const file = { title: "模块源码绑定", document: "code-sources.json" as const }
+    const draft = await loadWorkflowDocument(project.path, file)
+    const content = JSON.stringify({ version: 1, moduleBindings: { query: { repository: "/repos/imeta", paths: ["query/src/main/java"] } } })
+    await saveWorkflowDocument(project.path, file, { ...draft, content })
+    const saved = await loadWorkflowDocument(project.path, file)
+    expect(saved.content).toBe(content)
+    await writeFileRaw(project.path + "/code-sources.json", '{"version":1,"moduleBindings":{}}')
+    await expect(saveWorkflowDocument(project.path, file, { ...saved, content })).rejects.toThrow("VERSION_CONFLICT")
+    expect(() => validateWorkflowDocument(file, '{"version":1,"moduleBindings":{"query":{"paths":["../outside"]}}}')).toThrow()
+  })
 })

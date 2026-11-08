@@ -185,6 +185,26 @@ impl ToolRegistry for BuiltinToolRegistry {
                     )
                     .map_err(|err| format!("Failed to serialize wiki.search result: {err}"))
                 }
+                "wiki.read_pages" => {
+                    let pages = input.get("pages").and_then(Value::as_array)
+                        .filter(|pages| (1..=4).contains(&pages.len()))
+                        .ok_or("wiki.read_pages requires 1–4 pages")?;
+                    let mut results = Vec::with_capacity(pages.len());
+                    for page in pages {
+                        let mut page = page.clone();
+                        // 限制整批正文最多 24K 字符，游标及版本仍由单页读取统一产生。
+                        if page.is_object() && (page["maxChars"].is_null()
+                            || page["maxChars"].as_u64().is_some_and(|limit| limit > 6_000)) {
+                            page["maxChars"] = json!(6_000);
+                        }
+                        let result = match self.execute("wiki.read_page", page.clone(), context.clone()).await {
+                            Ok(output) => output,
+                            Err(error) => json!({"path":page["path"], "error":error}),
+                        };
+                        results.push(result);
+                    }
+                    Ok(json!({"pages":results}))
+                }
                 "wiki.read_page" => {
                     let range: super::wiki_files::ReadSourceRequest = serde_json::from_value(input.clone())
                         .map_err(|error| format!("wiki.read_page 参数无效：{error}"))?;
@@ -469,6 +489,20 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                     "revision":{"type":"string"} },
                 "required": ["path"]
             })),
+        },
+        ToolSpec {
+            name: "wiki.read_pages".to_string(),
+            description: "一次读取 1–4 个已知 Wiki 页面，减少模型往返。每页最多 6000 字符，逐页保留版本、范围、续读游标或错误；不保证多页属于同一时刻快照。".to_string(),
+            effects: vec![ToolEffect::Read],
+            parameters: Some(json!({"type":"object", "required":["pages"], "properties":{
+                "pages":{"type":"array", "minItems":1, "maxItems":4, "items":{
+                    "type":"object", "required":["path"], "properties":{
+                        "path":{"type":"string"}, "revision":{"type":"string"},
+                        "startLine":{"type":"integer","minimum":1}, "endLine":{"type":"integer","minimum":1},
+                        "startColumn":{"type":"integer","minimum":1}, "maxChars":{"type":"integer","minimum":1,"maximum":6000}
+                    }
+                }}
+            }})),
         },
         ToolSpec {
             name: "source.search".to_string(),
@@ -2714,6 +2748,36 @@ mod tests {
         assert!(names.contains(&"workspace.write_file".to_string()));
         assert!(names.contains(&"workspace.append_file".to_string()));
         assert!(names.contains(&"shell.exec".to_string()));
+    }
+
+    /// 批量读取保留逐页范围与版本，单页失败不丢失其他证据，拒绝空批次及过大批次。
+    #[tokio::test]
+    async fn batch_read_preserves_page_contracts_and_limits() {
+        let root = std::env::temp_dir().join(format!("wiki-batch-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+        let path = "wiki/concepts/a.md";
+        let text = format!("# 标题\n{}", "中文正文".repeat(4000));
+        fs::write(root.join(path), &text).unwrap();
+        let context = ToolContext { project_path: root.to_str().unwrap(), review_conversation: true,
+            embedding_config: None, web_search_config: None, anytxt_config: None };
+        let result = BuiltinToolRegistry.execute("wiki.read_pages", json!({"pages":[
+            {"path":path,"maxChars":12000}, {"path":"../outside.md"},
+            {"path":path,"revision":"stale"}, {"path":"wiki/concepts/missing.md"}
+        ]}), context.clone()).await.unwrap();
+        let pages = result["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 4);
+        assert_eq!(pages[0]["revision"], super::super::wiki_files::revision(&text));
+        assert_eq!(pages[0]["truncated"], true);
+        assert!(pages[0]["nextStartLine"].is_number());
+        assert_eq!(pages[0]["content"].as_str().unwrap().chars().count(), 6000);
+        for page in &pages[1..] {
+            assert!(page["error"].is_string());
+            assert!(page.get("content").is_none());
+        }
+        for pages in [vec![], vec![json!({"path":path}); 5]] {
+            assert!(BuiltinToolRegistry.execute("wiki.read_pages", json!({"pages":pages}), context.clone()).await.is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Wiki 范围读取保留 CRLF、中文及长行，按返回游标接续后逐字还原全文。

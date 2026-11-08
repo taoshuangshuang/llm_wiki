@@ -4,7 +4,7 @@ import type { ParameterSection } from "../settings-persistence"
 
 export type WorkflowStageId = "common" | "preprocess" | "analysis" | "generation" | "write" | "review" | "retrieval" | "output"
 export type InlineSection = "llm" | "retrieval" | "web-search" | "review-migration" | "variables"
-export type ProjectDocument = "purpose.md" | "schema.md" | "page-rules.md" | "business-modules.md"
+export type ProjectDocument = "purpose.md" | "schema.md" | "page-rules.md" | "business-modules.md" | "code-sources.json"
 export interface WorkflowFile { title: string; description?: string; prompt?: keyof IngestPrompts; document?: ProjectDocument }
 export interface WorkflowNode {
   id: string
@@ -31,7 +31,7 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
   { id: "common", title: "公共设置", description: "为后续节点提供共同配置；每项注明实际生效范围。", nodes: [
     { id: "purpose", title: "知识库目标", description: "定义知识库用途、收录范围与领域约定。", input: "用户定义的知识目标", output: "供分析、生成与审阅使用的项目背景", impact: "影响后续相关模型判断，不自动清理已有页面。", scope: "当前项目", files: [{ title: "知识库目标与收录范围", description: "说明知识库要收录什么，以及分析、生成和审阅应遵循的项目目标。", document: "purpose.md" }] },
     { id: "schema", title: "页面类型与通用约束", description: "定义页面类型、目录路由及项目通用规则。", input: "类型与领域约束", output: "分析、生成、目录校验及问答使用的核心 Schema", impact: "同时影响后续入库和问答；已有页面不会因保存自动迁移。", scope: "当前项目", files: [{ title: "核心 Schema", description: "定义页面类型、存储目录和各阶段共同遵守的领域约束。", document: "schema.md" }] },
-    { id: "business-types", title: "业务类型与模块字典", description: "统一维护知识库的业务模块定义，供页面分类与业务树展示使用。", input: "业务模块标识、名称、说明及层级", output: "页面业务分类可选字典与业务树结构", impact: "影响后续业务标签选择与业务树展示，不决定页面类型和存储目录；已有页面标签需重新分类后更新。", files: [{ title: "业务模块字典", description: "定义业务模块的标识、名称、层级与分类依据，供分类和业务树展示使用。", document: "business-modules.md" }], scope: "当前项目" },
+    { id: "business-types", title: "业务类型与模块字典", description: "维护业务模块、绑定仓库和模块或包范围，供页面分类、业务树展示与冲突源码核验使用。", input: "业务模块标识、名称、说明、层级及源码绑定", output: "页面业务分类字典、业务树及冲突核验使用的源码范围", impact: "字典和源码绑定分别保存；子模块可继承仓库并指定模块或包范围。绑定用于后续冲突源码核验，已有事项可手动核验；保存不会自动重跑已完成的检查。已有页面标签需重新分类后更新，页面类型和存储目录沿用原规则。", files: [{ title: "业务模块字典", description: "维护模块分类依据，并在模块详情绑定仓库和代码范围，供冲突源码核验使用。", document: "business-modules.md" }], scope: "当前项目" },
     { id: "vector-store", title: "向量库配置", description: "统一配置向量模型、连接、分块与批量参数，管理当前项目向量索引。", input: "向量服务地址、模型、访问凭据与分块参数", output: "向量索引构建和语义检索使用的有效配置", impact: "同时影响入库后的向量构建、候选匹配、后台审阅与问答检索；更换模型、维度或分块参数后需重建历史索引。", parameter: "embedding", scope: "全应用配置；索引按项目保存" },
     { id: "models", title: "模型与任务路由", description: "配置模型连接、全局默认、项目覆盖及不同任务使用的模型。", input: "可用模型与连接凭据", output: "各任务的有效模型配置", impact: "影响后续模型请求；不会重新执行已完成任务。", inline: "llm", scope: "应用默认 / 项目覆盖" },
     { id: "network", title: "公共网络代理", description: "配置应用出站请求使用的网络代理。", input: "代理地址及访问选项", output: "模型、解析和外部检索请求的网络环境", impact: "同时影响应用其他出站请求，下一次请求使用新配置。", parameter: "network", scope: "全应用" },
@@ -65,10 +65,11 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
     { id: "index", title: "目录索引与链接更新", description: "维护实际落盘页面的导航目录索引；链接关系由全库引用维护节点统一处理。", input: "实际写入路径及正文", output: "最新导航索引与链接", impact: "由程序自动执行；仅更新索引不等于重新生成知识正文。" },
     { id: "embedding", title: "向量索引构建", description: "为已写入页面分块并建立向量索引，供后续语义检索使用。", input: "实际页面正文、向量模型和分块参数", output: "页面向量及索引状态", impact: "影响后续向量构建；更换模型、维度或分块参数后，需重建历史索引。", condition: "启用 Embedding 时执行", references: ["vector-store"] },
   ] },
-  { id: "review", title: "后台审阅", description: "页面写入后独立执行；审阅失败不回退已写入页面，可单独重试。", nodes: [
+  { id: "review", title: "后台审阅", description: "页面写入后独立执行；发现冲突时可自动结合绑定源码核验。审阅失败不回退已写入页面，可单独重试。", nodes: [
     { id: "format-check", title: "页面格式检查", description: "检查 YAML、必要字段、页面类型、目录归属及引用目标和章节是否存在。", input: "实际落盘页和项目 Schema", output: "一轮规范化及复查记录，失败转人工", impact: "检查由程序执行；缺页、缺章节和名称歧义转待审阅，不调用模型补页，不自动创建占位页；同一问题去重。项目类型和目录约束在公共设置中编辑。", references: ["schema"] },
     { id: "coverage-check", title: "来源内容覆盖检查", description: "对照来源快照与实际写入页，识别遗漏与失真；部分入库不把待补写内容判成遗漏。", input: "固定来源快照、写入后页面及项目规范", output: "关键内容修复记录，材料不足或失败转人工", impact: "可通过重新审阅应用规则，不必重新生成页面。", files: [{ title: "来源内容校验（现有最终验收规则）", description: "对照来源快照与实际落盘页，识别关键内容的遗漏与失真。", prompt: "acceptance" }], references: ["writing-rules", "purpose", "models", "schema"], scope: "当前项目" },
-    { id: "knowledge-check", inline: "review-migration", title: "已有知识核对与共用规则", description: "检索相关已有知识，分项检查冲突、重复与必要的知识补充建议。", input: "本轮页面、已有知识证据及项目目标", output: "有证据和范围说明的待审阅事项", impact: "影响已有知识核对和补充建议；保存后可重新审阅，检索范围有限时会注明。", files: [{ title: "统一后台审阅", description: "定义冲突、重复和知识补充建议的审阅要求及证据协议。", prompt: "backgroundReview" }, { title: "待审查事项筛选规则", description: "筛选有材料依据、值得人工核查的问题，避免无依据地生成待办。", prompt: "review" }], references: ["local-retrieval", "models", "purpose"], scope: "当前项目" },
+    { id: "knowledge-check", inline: "review-migration", title: "已有知识核对与共用规则", description: "检索相关已有知识，分项检查冲突、重复与必要的知识补充建议；发现冲突或待确认差异时，已绑定模块自动进入源码核验。", input: "本轮页面、已有知识证据及项目目标", output: "有证据和范围说明的待审阅事项，符合条件时附源码核验结果", impact: "影响已有知识核对和补充建议；保存后可重新审阅，检索范围有限时会注明。源码核验按业务模块绑定自动执行，证据不足时保留原事项。", files: [{ title: "统一后台审阅", description: "定义冲突、重复和知识补充建议的审阅要求及证据协议。", prompt: "backgroundReview" }, { title: "待审查事项筛选规则", description: "筛选有材料依据、值得人工核查的问题，避免无依据地生成待办。", prompt: "review" }], references: ["local-retrieval", "models", "purpose", "code-conflict-check"], scope: "当前项目" },
+    { id: "code-conflict-check", title: "冲突源码核验", description: "发现冲突 → 匹配模块绑定 → 检索源码与调用关系 → 分析实现 → 附上代码位置和结论。优先使用现有 CodeGraph 索引。", input: "冲突或待确认差异的原文证据、页面业务标签、生效的仓库与代码范围", output: "附在原审阅事项下的核验结论、文件行号、逐字代码引用及提交版本", impact: "在业务模块字典中绑定仓库，子模块可继承并指定模块或包范围；范围内优先检索，调用链可扩展到同一仓库。没有可用 CodeGraph 时退回文本检索。核验依据当前本机实现，材料变化时标记失效；证据不足时保留待确认，不自动修改文档或关闭冲突。已完成的检查不会自动重跑，已有事项可点击「源码核验」。", condition: "发现事实冲突或待确认差异，且证据页面的业务模块已有生效的源码绑定时执行", references: ["business-types", "models", "language"], scope: "当前项目；使用当前本机源码" },
     { id: "supplement-check", title: "知识补充建议", description: "合并缺页与研究，只报告直接影响当前主题理解或使用的重要未知。", input: "本次页面、复用的检索证据及项目目标", output: "供人工按需处理的知识补充建议", impact: "同一未知只生成一条；不自动生成无依据页面；普通信息不完整不例行报待办。", references: ["knowledge-check", "purpose", "models"] },
   ] },
   { id: "retrieval", title: "检索", description: "既服务问答，也被入库匹配和后台审阅复用；不代表入库后才首次检索。", nodes: [

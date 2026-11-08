@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { normalizeReviewTitle } from "@/lib/review-utils"
+import type { CodeConflictAnalysis } from "@/lib/code-conflict-types"
 
 export interface ReviewOption {
   label: string
@@ -46,6 +47,7 @@ export interface ReviewItem {
   legacyIds?: string[]
   resolutionUpdatedAt?: number
   repair?: { status: "resolved" | "unresolved"; reason: string }
+  codeAnalysis?: CodeConflictAnalysis
 }
 
 interface ReviewState {
@@ -117,6 +119,7 @@ function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
     hidden: latest.hidden ?? a.hidden ?? b.hidden,
     dismissed: resolved && ((a.resolutionUpdatedAt || b.resolutionUpdatedAt) ? latest.dismissed : a.dismissed || b.dismissed) || undefined,
     description: b.description || a.description,
+    codeAnalysis: (a.codeAnalysis?.checkedAt ?? 0) > (b.codeAnalysis?.checkedAt ?? 0) ? a.codeAnalysis : b.codeAnalysis ?? a.codeAnalysis,
     sourcePath: b.sourcePath ?? a.sourcePath,
     affectedPages: unionField(a.affectedPages, b.affectedPages),
     runIds: unionField(a.runIds, b.runIds),
@@ -183,10 +186,21 @@ export const useReviewStore = create<ReviewState>((set) => ({
             evidence: incoming.evidence ?? old.evidence,
             outcome: incoming.outcome ?? old.outcome,
             risk: incoming.risk ?? old.risk,
+            codeAnalysis: (old.codeAnalysis?.checkedAt ?? 0) > (incoming.codeAnalysis?.checkedAt ?? 0) ? old.codeAnalysis : incoming.codeAnalysis ?? old.codeAnalysis,
             historical: incoming.historical ?? old.historical,
             repair: incoming.repair ?? old.repair,
           }
         } else {
+          // 同一结构问题在页面改版后会以新的证据版本再次出现；旧版本的未决
+          // 事项由新事项接替，按历史证据退出待审列表，避免同一问题并列两条。
+          if (incoming.type === "structure" && incoming.logicalId) {
+            for (let index = 0; index < result.length; index++) {
+              const old = result[index]
+              if (old.type === "structure" && old.logicalId === incoming.logicalId && !old.resolved && !old.historical && !old.hidden && !old.dismissed) {
+                result[index] = { ...old, historical: true }
+              }
+            }
+          }
           result.push({ ...incoming, id, resolved: false, createdAt: Date.now() })
           indexById.set(id, result.length - 1)
         }

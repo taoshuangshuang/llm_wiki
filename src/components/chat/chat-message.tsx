@@ -21,6 +21,7 @@ import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName, isAbsolutePath } from "@/lib/path-utils"
+import { splitWikilinkTarget } from "@/lib/wikilink-anchor"
 import { messageImageToDataUrl } from "@/lib/chat-image-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { transformImageEmbeds } from "@/lib/wikilink-transform"
@@ -1209,7 +1210,7 @@ function extractCitedPages(text: string): CitedPage[] {
     for (const link of wikilinks) {
       const nameMatch = link.match(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/)
       if (nameMatch) {
-        const id = nameMatch[1].trim()
+        const id = splitWikilinkTarget(nameMatch[1]).page
         const display = nameMatch[2]?.trim() || id
 
         // Skip if id contains path separators (already a path like queries/xxx)
@@ -1577,11 +1578,13 @@ function processContent(text: string): string {
   return result
 }
 
-function WikiLink({ pageName, children }: { pageName: string; children: React.ReactNode }) {
+function WikiLink({ pageName: rawPageName, children }: { pageName: string; children: React.ReactNode }) {
   const project = useWikiStore((s) => s.project)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
+  const setPendingScrollHeading = useWikiStore((s) => s.setPendingScrollHeading)
   const [exists, setExists] = useState<boolean | null>(null)
   const resolvedPath = useRef<string | null>(null)
+  const { page: pageName, anchor } = splitWikilinkTarget(rawPageName)
 
   useEffect(() => {
     if (!project) return
@@ -1620,11 +1623,12 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
     if (!resolvedPath.current) return
     try {
       const content = await readFile(resolvedPath.current)
+      setPendingScrollHeading(anchor ? { path: resolvedPath.current, heading: anchor } : null)
       openFileInPreview(resolvedPath.current, content)
     } catch {
       // ignore
     }
-  }, [openFileInPreview])
+  }, [openFileInPreview, setPendingScrollHeading, anchor])
 
   if (exists === false) {
     return (

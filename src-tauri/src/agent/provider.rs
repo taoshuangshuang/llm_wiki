@@ -1032,10 +1032,26 @@ fn supports_deepseek_thinking_param(config: &LlmConfig) -> bool {
     model.contains("deepseek-v4")
 }
 
+/// 仅识别已知支持思考开关的 Ark Seed 2.x，未知兼容网关继续沿用原协议。
+fn supports_ark_thinking_param(config: &LlmConfig) -> bool {
+    let model = config.model.to_ascii_lowercase().replace('.', "-");
+    config.provider == "custom"
+        && ["doubao-seed-2-0-", "doubao-seed-2-1-"].iter().any(|prefix| model.starts_with(prefix))
+        && reqwest::Url::parse(&config.custom_endpoint).ok().is_some_and(|url| {
+            url.host_str() == Some("ark.cn-beijing.volces.com")
+        })
+}
+
 fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
     let Some(reasoning) = config.reasoning.as_ref() else {
         return;
     };
+    if supports_ark_thinking_param(config) {
+        if reasoning.mode.as_deref() == Some("off") {
+            body["thinking"] = json!({ "type": "disabled" });
+        }
+        return;
+    }
     if is_deepseek_endpoint(config) && supports_deepseek_thinking_param(config) {
         if reasoning.mode.as_deref() == Some("off") {
             body["thinking"] = json!({ "type": "disabled" });
@@ -1466,6 +1482,44 @@ mod tests {
             let body = client.openai_like_body("system", "user", &[], true, false);
 
             assert_eq!(body["max_tokens"], expected);
+        }
+    }
+
+    /// 复现真实会话配置：Ark Seed 2.x 工具决策必须把关闭思考落实到请求体。
+    #[test]
+    fn ark_seed_structured_tasks_disable_thinking() {
+        for base in ["https://ark.cn-beijing.volces.com/api/plan/v3",
+            "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "https://ark.cn-beijing.volces.com/api/v3"] {
+            for model in ["doubao-seed-2.1-lite", "Doubao-Seed-2.0-Code", "doubao-seed-2-1-lite-260915"] {
+                let mut cfg = config("custom");
+                cfg.custom_endpoint = base.into();
+                cfg.model = model.into();
+                let client = LlmClient::new(cfg).unwrap().structured_task_config(32_768);
+                let body = client.openai_like_body("system", "user", &[], true, false);
+                assert_eq!(body["thinking"]["type"], "disabled", "{base}: {model}");
+                assert!(body.get("response_format").is_none());
+            }
+        }
+    }
+
+    /// 保护未知网关、其他模型和普通聊天，避免附加不兼容的供应商参数。
+    #[test]
+    fn ark_thinking_control_preserves_other_providers_and_chat_defaults() {
+        for (base, model, structured) in [
+            ("https://example.com/v1", "doubao-seed-2.1-lite", true),
+            ("https://ark.cn-beijing.volces.com.example.com/api/v3", "doubao-seed-2.1-lite", true),
+            ("https://ark.cn-beijing.volces.com/api/plan/v3", "GLM-5.3-Flash", true),
+            ("https://ark.cn-beijing.volces.com/api/plan/v3", "doubao-seed-2.1-lite", false),
+        ] {
+            let mut cfg = config("custom");
+            cfg.custom_endpoint = base.into();
+            cfg.model = model.into();
+            let client = LlmClient::new(cfg).unwrap();
+            let client = if structured { client.structured_task_config(32_768) } else { client };
+            let body = client.openai_like_body("system", "user", &[], true, false);
+            assert!(body.get("thinking").is_none(), "{base}: {model}");
+            assert!(body.get("reasoning_effort").is_none());
         }
     }
 

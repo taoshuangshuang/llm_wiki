@@ -8,31 +8,24 @@ import {
   RefreshCw,
   CheckCircle2,
   BrainCircuit,
-  Wrench,
-  Trash2,
   Link,
   Settings2,
   Pause,
   Play,
+  RotateCcw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CodeAnalysisDetails } from "@/components/review/code-analysis-details"
 import { useWikiStore } from "@/stores/wiki-store"
-import { useReviewStore } from "@/stores/review-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
-import { startLintRun, pauseLintRun, resumeLintRun, restoreLintRun } from "@/lib/lint-runner"
+import { startLintRun, pauseLintRun, resumeLintRun, restoreLintRun, resetLintRun } from "@/lib/lint-runner"
 import { useLintRunStore, DEFAULT_LINT_RUN } from "@/stores/lint-run-store"
 import { loadProjectSchema } from "@/lib/project-schema"
 import { parseModuleCatalog, type BusinessModule, type ModuleCatalog } from "@/features/business-modules/catalog"
 import { loadModulePages } from "@/features/business-modules/pages"
 import { filterLintItems, lintModuleIndex, type LintFilters } from "@/lib/lint-filters"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
-import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
-import {
-  appendWikilink,
-  ensureBrokenLinkStub,
-  rewriteWikilinkTarget,
-} from "@/lib/lint-fixes"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import {
@@ -89,6 +82,7 @@ export function LintView() {
   const { running, paused, pausing, phase, progress: lintProgress, hasRun, runSemantic, error: checkError, detail: checkDetail } = run
   const dataVersion = useWikiStore((state) => state.dataVersion)
   const [restoringHistory, setRestoringHistory] = useState(true)
+  const [resettingProgress, setResettingProgress] = useState(false)
   const [filters, setFilters] = useState<LintFilters>({ type: "", moduleId: "", query: "" })
   const [moduleData, setModuleData] = useState<{ path: string; catalog: ModuleCatalog | null; index: Map<string, string[]> }>({ path: "", catalog: null, index: new Map() })
   const [moduleError, setModuleError] = useState<string | null>(null)
@@ -112,9 +106,6 @@ export function LintView() {
   const [ignoredPagesDraft, setIgnoredPagesDraft] = useState("")
   const [savingConfig, setSavingConfig] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
-  const [fixingId, setFixingId] = useState<string | null>(null)
-  const [batchFixing, setBatchFixing] = useState(false)
-  const [fixError, setFixError] = useState<string | null>(null)
   const [selectedLintIds, setSelectedLintIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
@@ -201,9 +192,30 @@ export function LintView() {
     }
   }, [ignoredPagesDraft, lintConfig, project, savingConfig])
 
+  async function handleResetProgress() {
+    if (!project || running || resettingProgress) return
+    const path = projectPath
+    setResettingProgress(true)
+    try {
+      const confirmed = await appDialog.confirm({
+        title: t("lint.resetProgress"),
+        message: t("lint.resetProgressConfirm"),
+        confirmLabel: t("lint.resetProgress"),
+      })
+      if (!confirmed) return
+      await resetLintRun(path)
+      if (normalizePath(useWikiStore.getState().project?.path ?? "") === path) {
+        setSelectedLintIds(new Set())
+      }
+    } catch (error) {
+      console.error("Reset failed:", error)
+    } finally {
+      setResettingProgress(false)
+    }
+  }
+
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
-    setFixError(null)
     setSelectedLintIds(new Set())
     const options = {
       project, llmConfig, runSemantic,
@@ -233,154 +245,9 @@ export function LintView() {
     openFileInPreview(candidates[0], `Unable to load: ${page}`)
   }
 
-  const addLintItemToReview = useCallback((item: LintItem) => {
-    if (item.reviewItem) { useReviewStore.getState().addItems([item.reviewItem]); return }
-    switch (item.type) {
-      case "broken-link": {
-        const pp = project ? normalizePath(project.path) : ""
-        useReviewStore.getState().addItem({
-          type: "confirm",
-          title: t("lint.fixBrokenLink", { page: item.page }),
-          description: item.detail,
-          affectedPages: [item.page],
-          options: [
-            { label: t("lint.openEdit"), action: `open:${item.page}` },
-            ...(pp ? [{ label: t("lint.deletePage"), action: `delete:${pp}/wiki/${item.page}` }] : []),
-            { label: t("lint.skip"), action: "Skip" },
-          ],
-        })
-        break
-      }
-      case "orphan":
-      case "no-outlinks": {
-        useReviewStore.getState().addItem({
-          type: "suggestion",
-          title: t("lint.addCrossRefs", { page: item.page }),
-          description: item.type === "no-outlinks" ? t("lint.addCrossRefsDescription") : item.detail,
-          affectedPages: [item.page],
-          options: [
-            { label: t("lint.openEdit"), action: `open:${item.page}` },
-            { label: t("lint.skip"), action: "Skip" },
-          ],
-        })
-        break
-      }
-      default: {
-        useReviewStore.getState().addItem({
-          type: "confirm",
-          title: item.detail.slice(0, 80),
-          description: item.detail,
-          affectedPages: item.affectedPages ?? [item.page],
-          options: [
-            { label: t("lint.openEdit"), action: `open:${item.page}` },
-            { label: t("lint.skip"), action: "Skip" },
-          ],
-        })
-      }
-    }
-  }, [project, t])
-
-  async function handleFix(item: LintItem, refreshTree = true) {
-    if (!project) return
-    const pp = normalizePath(project.path)
-    setFixingId(item.id)
-    setFixError(null)
-
-    try {
-      switch (item.type) {
-        case "orphan": {
-          if (item.suggestedSource) {
-            const sourcePath = `${pp}/wiki/${item.suggestedSource}`
-            const content = await readFile(sourcePath)
-            await writeFile(sourcePath, appendWikilink(content, item.page))
-          } else {
-            addLintItemToReview(item)
-          }
-          useLintStore.getState().removeItem(item.id)
-          break
-        }
-
-        case "broken-link": {
-          const pagePath = `${pp}/wiki/${item.page}`
-          if (item.brokenTarget && item.suggestedTarget) {
-            const content = await readFile(pagePath)
-            await writeFile(pagePath, rewriteWikilinkTarget(content, item.brokenTarget, item.suggestedTarget))
-          } else if (item.brokenTarget) {
-            const content = await readFile(pagePath)
-            const stub = await ensureBrokenLinkStub(pp, item.brokenTarget)
-            await writeFile(pagePath, rewriteWikilinkTarget(content, item.brokenTarget, stub.relativePath))
-          } else {
-            addLintItemToReview(item)
-          }
-          useLintStore.getState().removeItem(item.id)
-          break
-        }
-
-        case "no-outlinks": {
-          if (item.suggestedTarget) {
-            const pagePath = `${pp}/wiki/${item.page}`
-            const content = await readFile(pagePath)
-            await writeFile(pagePath, appendWikilink(content, item.suggestedTarget))
-          } else {
-            addLintItemToReview(item)
-          }
-          useLintStore.getState().removeItem(item.id)
-          break
-        }
-
-        default: {
-          // Semantic issues → send to Review for manual resolution
-          addLintItemToReview(item)
-          useLintStore.getState().removeItem(item.id)
-          break
-        }
-      }
-
-      if (refreshTree) {
-        await refreshProjectFileTree(pp, {
-          projectId: project.id,
-          bumpDataVersion: true,
-        })
-      }
-    } catch (err) {
-      console.error("Fix failed:", err)
-      setFixError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setFixingId(null)
-    }
-  }
-
-  async function handleDeleteOrphan(item: LintItem) {
-    if (!project) return
-    const pp = normalizePath(project.path)
-    const pagePath = `${pp}/wiki/${item.page}`
-    const confirmed = await appDialog.confirm({
-      message: t("lint.deleteOrphanConfirm", { page: item.page }),
-      variant: "destructive",
-    })
-    if (!confirmed) return
-
-    try {
-      // Full cascade: file + embedding chunks + every reference to
-      // the page across the wiki (body wikilinks, index.md listing,
-      // `related:` frontmatter arrays). Even though "orphan" by lint
-      // means no incoming wikilinks were detected, `related:` slugs
-      // and index.md entries can still point at it — the orphan
-      // detector only walks body refs.
-      const { cascadeDeleteWikiPagesWithRefs } = await import(
-        "@/lib/wiki-page-delete"
-      )
-      const result = await cascadeDeleteWikiPagesWithRefs(pp, [pagePath])
-      if (result.warnings.length > 0) await appDialog.alert({ message: result.warnings.join("\n") })
-      useLintStore.getState().removeItem(item.id)
-      await refreshProjectFileTree(pp, {
-        projectId: project.id,
-        bumpDataVersion: true,
-      })
-    } catch (err) {
-      console.error("Delete failed:", err)
-    }
-  }
+  const goToReview = useCallback(() => {
+    useWikiStore.getState().setActiveView("review")
+  }, [])
 
   const { warnings, infos } = useMemo(
     () => groupLintResultsForDisplay(visibleItems),
@@ -392,7 +259,6 @@ export function LintView() {
     [visibleItems, selectedLintIds],
   )
   const allLintSelected = visibleItems.length > 0 && selectedLintItems.length === visibleItems.length
-  const isFixing = fixingId !== null || batchFixing
 
   const setLintSelected = useCallback((id: string, selected: boolean) => {
     setSelectedLintIds((prev) => {
@@ -420,74 +286,6 @@ export function LintView() {
     removeLintItems(ids)
     setSelectedLintIds(new Set())
   }, [removeLintItems, selectedLintItems])
-
-  const handleBatchSendToReview = useCallback(() => {
-    for (const item of selectedLintItems) {
-      addLintItemToReview(item)
-    }
-    removeLintItems(selectedLintItems.map((item) => item.id))
-    setSelectedLintIds(new Set())
-  }, [addLintItemToReview, removeLintItems, selectedLintItems])
-
-  const handleBatchFix = useCallback(async () => {
-    if (!project || batchFixing || selectedLintItems.length === 0) return
-    setBatchFixing(true)
-    setFixError(null)
-    const pp = normalizePath(project.path)
-    let filesystemChanged = false
-    try {
-      const edits = new Map<string, Array<{ id: string; apply: (content: string) => string }>>()
-      const queueEdit = (path: string, id: string, apply: (content: string) => string) => {
-        const pending = edits.get(path) ?? []
-        pending.push({ id, apply })
-        edits.set(path, pending)
-      }
-
-      for (const item of selectedLintItems) {
-        if (item.type === "orphan" && item.suggestedSource) {
-          queueEdit(`${pp}/wiki/${item.suggestedSource}`, item.id, (content) => appendWikilink(content, item.page))
-        } else if (item.type === "no-outlinks" && item.suggestedTarget) {
-          queueEdit(`${pp}/wiki/${item.page}`, item.id, (content) => appendWikilink(content, item.suggestedTarget!))
-        } else if (item.type === "broken-link" && item.brokenTarget) {
-          const stub = item.suggestedTarget ? null : await ensureBrokenLinkStub(pp, item.brokenTarget)
-          if (stub) filesystemChanged = true
-          const target = item.suggestedTarget ?? stub!.relativePath
-          queueEdit(`${pp}/wiki/${item.page}`, item.id, (content) =>
-            rewriteWikilinkTarget(content, item.brokenTarget!, target))
-        } else {
-          addLintItemToReview(item)
-          removeLintItems([item.id])
-        }
-      }
-
-      // Multiple findings can target the same page. Apply their transforms in
-      // memory and write that page once, avoiding lost updates and N full reads.
-      for (const [path, pending] of edits) {
-        const original = await readFile(path)
-        const updated = pending.reduce((content, edit) => edit.apply(content), original)
-        if (updated !== original) {
-          await writeFile(path, updated)
-          filesystemChanged = true
-        }
-        removeLintItems(pending.map((edit) => edit.id))
-      }
-      setSelectedLintIds(new Set())
-    } catch (err) {
-      console.error("Batch fix failed:", err)
-      setFixError(err instanceof Error ? err.message : String(err))
-    } finally {
-      // Refresh even after a partial failure: earlier files or stubs may have
-      // been written successfully. The expensive recursive rebuild still runs
-      // at most once for the whole batch.
-      if (filesystemChanged) {
-        await refreshProjectFileTree(pp, {
-          projectId: project.id,
-          bumpDataVersion: true,
-        })
-      }
-      setBatchFixing(false)
-    }
-  }, [addLintItemToReview, batchFixing, project, removeLintItems, selectedLintItems])
 
   return (
     <div className="flex h-full flex-col">
@@ -522,9 +320,18 @@ export function LintView() {
           </label>
           <Button
             size="sm"
+            variant="outline"
+            onClick={handleResetProgress}
+            disabled={!project || running || pausing || restoringHistory || resettingProgress || (!hasRun && items.length === 0)}
+          >
+            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+            {resettingProgress ? t("lint.resettingProgress") : t("lint.resetProgress")}
+          </Button>
+          <Button
+            size="sm"
             variant={running ? "outline" : "default"}
             onClick={running ? () => pauseLintRun(projectPath) : handleRunLint}
-            disabled={!project || pausing || restoringHistory}
+            disabled={!project || pausing || restoringHistory || resettingProgress}
           >
             {running ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : paused ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
             {pausing ? t("lint.pausing") : running ? t("lint.pause") : paused ? t("lint.resume") : t("lint.runLint")}
@@ -632,26 +439,8 @@ export function LintView() {
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs"
-            disabled={selectedLintItems.length === 0 || isFixing}
-            onClick={handleBatchFix}
-          >
-            {batchFixing ? t("lint.fixing") : t("lint.fixSelected")}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            disabled={selectedLintItems.length === 0 || isFixing}
-            onClick={handleBatchSendToReview}
-          >
-            {t("lint.sendSelectedToReview")}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
             className="h-7 text-xs text-destructive hover:text-destructive"
-            disabled={selectedLintItems.length === 0 || isFixing}
+            disabled={selectedLintItems.length === 0}
             onClick={handleBatchDismiss}
           >
             {t("lint.ignoreSelected")}
@@ -661,11 +450,6 @@ export function LintView() {
 
       <div className="flex-1 overflow-y-auto">
         {checkError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{checkError}</p>}
-        {fixError && (
-          <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {t("lint.fixFailed", { error: fixError })}
-          </div>
-        )}
         {!showResults ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
@@ -688,12 +472,10 @@ export function LintView() {
               <LintCard
                 key={item.id}
                 item={item}
-                fixing={fixingId === item.id}
                 selected={selectedLintIds.has(item.id)}
                 onSelectedChange={setLintSelected}
                 onOpenPage={handleOpenPage}
-                onFix={handleFix}
-                onDelete={item.type === "orphan" ? handleDeleteOrphan : undefined}
+                onGoToReview={goToReview}
                 typeConfig={typeConfig}
                 t={t}
               />
@@ -705,12 +487,10 @@ export function LintView() {
               <LintCard
                 key={item.id}
                 item={item}
-                fixing={fixingId === item.id}
                 selected={selectedLintIds.has(item.id)}
                 onSelectedChange={setLintSelected}
                 onOpenPage={handleOpenPage}
-                onFix={handleFix}
-                onDelete={item.type === "orphan" ? handleDeleteOrphan : undefined}
+                onGoToReview={goToReview}
                 typeConfig={typeConfig}
                 t={t}
               />
@@ -745,22 +525,18 @@ function SectionHeader({
 
 function LintCard({
   item,
-  fixing,
   selected,
   onSelectedChange,
   onOpenPage,
-  onFix,
-  onDelete,
+  onGoToReview,
   typeConfig,
   t,
 }: {
   item: LintItem
-  fixing: boolean
   selected: boolean
   onSelectedChange: (id: string, selected: boolean) => void
   onOpenPage: (page: string) => void
-  onFix: (item: LintItem) => void
-  onDelete?: (item: LintItem) => void
+  onGoToReview: () => void
   typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }>
   t: (key: string, opts?: Record<string, unknown>) => string
 }) {
@@ -789,6 +565,7 @@ function LintCard({
       </div>
 
       <p className="mb-2 text-xs text-muted-foreground">{item.detail}</p>
+      {item.reviewItem?.codeAnalysis && <CodeAnalysisDetails analysis={item.reviewItem.codeAnalysis} />}
 
       {(item.suggestedTarget || item.suggestedSource) && (
         <div className="mb-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
@@ -833,23 +610,10 @@ function LintCard({
           variant="outline"
           size="sm"
           className="h-6 text-xs gap-1"
-          disabled={fixing}
-          onClick={() => onFix(item)}
+          onClick={onGoToReview}
         >
-          <Wrench className="h-3 w-3" />
-          {fixing ? t("lint.fixing") : t("lint.fix")}
+          {t("lint.goToReview")}
         </Button>
-        {onDelete && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-xs gap-1 text-destructive hover:text-destructive"
-            onClick={() => onDelete(item)}
-          >
-            <Trash2 className="h-3 w-3" />
-            {t("lint.delete")}
-          </Button>
-        )}
       </div>
     </div>
   )

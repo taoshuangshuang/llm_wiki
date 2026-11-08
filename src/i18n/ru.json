@@ -105,6 +105,14 @@
     }
   },
   "editor": {
+    "find": {
+      "title": "Поиск в файле",
+      "placeholder": "Найти в текущем файле…",
+      "noResults": "Нет результатов",
+      "previous": "Предыдущее (Shift + Enter)",
+      "next": "Следующее (Enter)",
+      "close": "Закрыть (Esc)"
+    },
     "edit": "Редактировать",
     "done": "Готово",
     "editRaw": "Редактировать исходный Markdown",
@@ -253,6 +261,8 @@
     "searchPlaceholder": "Фильтр источников по имени или пути",
     "clearSearch": "Очистить фильтр источников",
     "noSearchResults": "Нет источников по запросу «{{query}}»",
+    "contentMatches": "Совпадения в содержимом (топ {{count}})",
+    "noContentMatches": "Ни один источник не содержит это ключевое слово в тексте",
     "filteredSourceCount": "{{count}} из {{total}} источников",
     "sourceCount_plural": "{{count}} источников"
   },
@@ -418,6 +428,9 @@
     "startSearching": "Начните вводить текст для поиска по страницам вики"
   },
   "lint": {
+    "resetProgress": "Сбросить прогресс",
+    "resettingProgress": "Сброс…",
+    "resetProgressConfirm": "Сбросить прогресс проверки и текущий список проблем? Следующая проверка начнётся с первого пакета. Сохранённые изменения страниц, настройки и решения ручной проверки сохранятся.",
     "awaitingIssues": "Check still running. No matching findings received yet.",
     "pause": "Pause",
     "pausing": "Pausing…",
@@ -463,25 +476,14 @@
     "info": "Сведения",
     "sectionCount": "{{label}} ({{count}})",
     "open": "Открыть",
-    "fixing": "Исправление...",
-    "fix": "Исправить",
-    "fixFailed": "Не удалось исправить: {{error}}",
-    "delete": "Удалить",
     "selectAll": "Выделить всё",
     "selectItem": "Выделить {{page}}",
     "selectedCount": "Выбрано: {{count}}",
-    "fixSelected": "Исправить выбранные",
-    "sendSelectedToReview": "Отправить выбранные в Ревью",
     "ignoreSelected": "Игнорировать выбранные",
     "openEdit": "Открыть и редактировать",
     "skip": "Пропустить",
-    "deletePage": "Удалить страницу",
-    "fixBrokenLink": "Исправить битую ссылку в {{page}}",
-    "addCrossRefs": "Добавить перекрёстные ссылки на {{page}}",
-    "addCrossRefsDescription": "У этой страницы нет исходящих [[wikilinks]]. Рекомендуется добавить перекрёстные ссылки на связанные сущности и понятия.",
     "suggestedTarget": "Рекомендуемая цель: {{page}}",
     "suggestedSource": "Рекомендуемый источник: {{page}}",
-    "deleteOrphanConfirm": "Удалить страницу-сироту «{{page}}»?",
     "typeLabels": {
       "orphan": "Страница-сирота",
       "broken-link": "Битая ссылка",
@@ -490,9 +492,12 @@
       "semantic": "Семантическая проблема"
     },
     "issues": "{{count}} проблема",
-    "issues_plural": "{{count}} проблем"
+    "issues_plural": "{{count}} проблем",
+    "goToReview": "Перейти в раздел review"
   },
   "review": {
+    "typeFilter": "Фильтр по типу",
+    "typeAll": "Все",
     "title": "Ревью",
     "clearResolved": "Очистить решённые",
     "refresh": "Обновить",

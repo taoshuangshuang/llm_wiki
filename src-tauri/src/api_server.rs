@@ -1357,7 +1357,7 @@ fn sanitize_review_item(item: &Value) -> Value {
     } else {
         copy_string_field(item, &mut out, "id");
     }
-    for key in ["schemaVersion", "logicalId", "evidenceVersion", "subtype", "runIds", "evidence", "outcome", "risk", "historical", "hidden", "resolvedEvidenceVersion", "legacyIds", "dismissed", "resolutionUpdatedAt"] {
+    for key in ["schemaVersion", "logicalId", "evidenceVersion", "subtype", "runIds", "evidence", "outcome", "risk", "historical", "hidden", "resolvedEvidenceVersion", "legacyIds", "dismissed", "resolutionUpdatedAt", "codeAnalysis"] {
         if let Some(value) = item.get(key) { out.insert(key.to_string(), value.clone()); }
     }
     copy_string_field(item, &mut out, "type");

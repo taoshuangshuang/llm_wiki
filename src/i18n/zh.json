@@ -120,6 +120,14 @@
     }
   },
   "editor": {
+    "find": {
+      "title": "文件内搜索",
+      "placeholder": "在当前文件中查找…",
+      "noResults": "无结果",
+      "previous": "上一个（Shift + Enter）",
+      "next": "下一个（Enter）",
+      "close": "关闭（Esc）"
+    },
     "edit": "编辑",
     "done": "完成",
     "editRaw": "编辑原始 Markdown",
@@ -268,6 +276,8 @@
     "searchPlaceholder": "按名称或路径筛选原始资料",
     "clearSearch": "清除资料筛选",
     "noSearchResults": "没有匹配“{{query}}”的原始资料",
+    "contentMatches": "内容匹配（前 {{count}} 条）",
+    "noContentMatches": "没有正文包含该关键词的原始资料",
     "filteredSourceCount": "显示 {{count}} / {{total}} 个资料",
     "sourceCount_plural": "{{count}} 个资料"
   },
@@ -434,6 +444,9 @@
     "startSearching": "输入关键词搜索 Wiki 页面"
   },
   "lint": {
+    "resetProgress": "重置进度",
+    "resettingProgress": "正在重置…",
+    "resetProgressConfirm": "重置后将清空检查进度和本轮问题列表，下次从第一批重新检查。已保存的页面修改、检查配置和人工审阅状态会保留。是否继续？",
     "awaitingIssues": "检查仍在进行，暂未收到符合筛选条件的问题。",
     "pause": "暂停",
     "pausing": "正在暂停…",
@@ -479,25 +492,14 @@
     "info": "提示",
     "sectionCount": "{{label}} ({{count}})",
     "open": "打开",
-    "fixing": "修复中...",
-    "fix": "修复",
-    "fixFailed": "修复失败：{{error}}",
-    "delete": "删除",
     "selectAll": "全选",
     "selectItem": "选择 {{page}}",
     "selectedCount": "已选择 {{count}} 项",
-    "fixSelected": "修复选中项",
-    "sendSelectedToReview": "转入待审阅",
     "ignoreSelected": "忽略选中项",
     "openEdit": "打开编辑",
     "skip": "跳过",
-    "deletePage": "删除页面",
-    "fixBrokenLink": "修复 {{page}} 中的失效链接",
-    "addCrossRefs": "为 {{page}} 添加交叉引用",
-    "addCrossRefsDescription": "此页面没有出站 [[wikilinks]]。建议添加与相关实体和概念的交叉引用。",
     "suggestedTarget": "建议目标：{{page}}",
     "suggestedSource": "建议来源：{{page}}",
-    "deleteOrphanConfirm": "删除孤立页面「{{page}}」？",
     "typeLabels": {
       "orphan": "孤立页面",
       "broken-link": "失效链接",
@@ -506,10 +508,13 @@
       "semantic": "语义问题"
     },
     "issues": "{{count}} 个问题",
-    "issues_plural": "{{count}} 个问题"
+    "issues_plural": "{{count}} 个问题",
+    "goToReview": "去审阅处理"
   },
   "review": {
     "importance": "审阅重要程度",
+    "typeFilter": "按类型过滤",
+    "typeAll": "全部",
     "important": "重要",
     "optional": "非重要",
     "categoryClear": "本分类暂无待审阅事项",

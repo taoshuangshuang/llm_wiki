@@ -3,6 +3,7 @@ import { fileExists, readFile, saveWorkflowFile } from "@/commands/fs"
 import { DEFAULT_INGEST_PROMPTS, PROMPT_FILES, findProjectPromptFile, renderIngestPromptTemplate, type IngestPrompts } from "@/lib/ingest-prompts"
 import { splitProjectSchema } from "@/lib/project-schema"
 import { parseModuleCatalog } from "@/features/business-modules/catalog"
+import { readCodeSourcesConfig } from "@/features/business-modules/code-sources"
 import type { WorkflowFile } from "./workflow-catalog"
 
 export interface WorkflowDocumentDraft {
@@ -13,6 +14,7 @@ export interface WorkflowDocumentDraft {
   content: string
   defaultContent?: string
 }
+export const CODE_SOURCES_FILE: WorkflowFile = { title: "模块源码绑定", document: "code-sources.json" }
 interface VariableContract { available: string[]; required: string[] }
 const analysisVariables = ["language_rule", "schema_context", "purpose_context"]
 export const PROMPT_VARIABLES: Partial<Record<keyof IngestPrompts, VariableContract>> = {
@@ -86,6 +88,7 @@ export async function loadWorkflowDocument(projectPath: string, file: WorkflowFi
 
 /** 只校验实际支持的模板变量及必要协议，不把自然语言规则当模板二次展开。 */
 export function validateWorkflowDocument(file: WorkflowFile, content: string): void {
+  if (file.document === "code-sources.json") readCodeSourcesConfig(content)
   if (file.document === "business-modules.md" && content.trim() && !parseModuleCatalog(content)) {
     throw new Error("业务模块字典需包含 Business Modules 或业务模块章节，以及有效 JSON。清空文件可停用业务分类。")
   }

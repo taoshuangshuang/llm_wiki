@@ -105,6 +105,14 @@
     }
   },
   "editor": {
+    "find": {
+      "title": "Trova nel file",
+      "placeholder": "Cerca nel file corrente…",
+      "noResults": "Nessun risultato",
+      "previous": "Precedente (Shift + Enter)",
+      "next": "Successivo (Enter)",
+      "close": "Chiudi (Esc)"
+    },
     "edit": "Modifica",
     "done": "Fatto",
     "editRaw": "Modifica il Markdown grezzo",
@@ -253,6 +261,8 @@
     "searchPlaceholder": "Filtra le fonti per nome o percorso",
     "clearSearch": "Cancella filtro fonti",
     "noSearchResults": "Nessuna fonte corrisponde a “{{query}}”",
+    "contentMatches": "Corrispondenze nel contenuto (prime {{count}})",
+    "noContentMatches": "Nessuna fonte contiene questa parola chiave nel testo",
     "filteredSourceCount": "{{count}} di {{total}} fonti",
     "sourceCount_plural": "{{count}} fonti"
   },
@@ -418,6 +428,9 @@
     "startSearching": "Scrivi per cercare nelle pagine wiki"
   },
   "lint": {
+    "resetProgress": "Reimposta avanzamento",
+    "resettingProgress": "Reimpostazione…",
+    "resetProgressConfirm": "Cancellare l’avanzamento e l’elenco attuale dei problemi? Il prossimo controllo ripartirà dal primo lotto. Le modifiche salvate, le impostazioni e le decisioni di revisione manuale verranno conservate.",
     "awaitingIssues": "Check still running. No matching findings received yet.",
     "pause": "Pause",
     "pausing": "Pausing…",
@@ -463,25 +476,14 @@
     "info": "Info",
     "sectionCount": "{{label}} ({{count}})",
     "open": "Apri",
-    "fixing": "Correzione...",
-    "fix": "Correggi",
-    "fixFailed": "Correzione non riuscita: {{error}}",
-    "delete": "Elimina",
     "selectAll": "Seleziona tutto",
     "selectItem": "Seleziona {{page}}",
     "selectedCount": "{{count}} selezionati",
-    "fixSelected": "Correggi i selezionati",
-    "sendSelectedToReview": "Invia i selezionati in Revisione",
     "ignoreSelected": "Ignora i selezionati",
     "openEdit": "Apri e modifica",
     "skip": "Salta",
-    "deletePage": "Elimina la pagina",
-    "fixBrokenLink": "Correggi il link non valido in {{page}}",
-    "addCrossRefs": "Aggiungi riferimenti incrociati a {{page}}",
-    "addCrossRefsDescription": "Questa pagina non ha [[wikilink]] in uscita. Valuta di aggiungere riferimenti incrociati a entità e concetti correlati.",
     "suggestedTarget": "Destinazione suggerita: {{page}}",
     "suggestedSource": "Origine suggerita: {{page}}",
-    "deleteOrphanConfirm": "Eliminare la pagina orfana \"{{page}}\"?",
     "typeLabels": {
       "orphan": "Pagina orfana",
       "broken-link": "Link non valido",
@@ -490,9 +492,12 @@
       "semantic": "Problema semantico"
     },
     "issues": "{{count}} problema",
-    "issues_plural": "{{count}} problemi"
+    "issues_plural": "{{count}} problemi",
+    "goToReview": "Vai alla revisione"
   },
   "review": {
+    "typeFilter": "Filtra per tipo",
+    "typeAll": "Tutti",
     "title": "Revisione",
     "clearResolved": "Rimuovi i risolti",
     "refresh": "Aggiorna",

@@ -2,10 +2,11 @@ import { listDirectory, readFile } from "@/commands/fs"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { normalizePath } from "@/lib/path-utils"
 import type { FileNode } from "@/types/wiki"
-import { descendantIds, type BusinessModule, type ModuleCatalog } from "./catalog"
-import { readPageModuleIds } from "./page-tags"
+import { descendantIds, normalizeModuleIds, type BusinessModule, type ModuleCatalog } from "./catalog"
+import { readTaggedModuleIds } from "./page-tags"
 
 export interface ModulePage { path: string; title: string; type: string; moduleIds: string[] }
+interface LoadedModulePage extends ModulePage { taggedModuleIds: string[] }
 interface PageReader {
   list: (path: string) => Promise<FileNode[]>
   read: (path: string) => Promise<string>
@@ -18,11 +19,11 @@ const DEFAULT_READER: PageReader = {
 /** 逐级扫描真实目录，避免侧栏懒加载状态或默认目录树深度影响页面覆盖。 */
 export async function loadModulePages(
   projectPath: string, catalog: ModuleCatalog, reader: PageReader = DEFAULT_READER, signal?: AbortSignal,
-): Promise<{ pages: ModulePage[]; unreadable: string[] }> {
+): Promise<{ pages: LoadedModulePage[]; unreadable: string[] }> {
   const root = `${normalizePath(projectPath).replace(/\/+$/, "")}/wiki`
   const directories = [root]
   const visited = new Set<string>()
-  const pages: ModulePage[] = []
+  const pages: LoadedModulePage[] = []
   const unreadable: string[] = []
   for (let index = 0; index < directories.length; index++) {
     signal?.throwIfAborted()
@@ -47,11 +48,13 @@ export async function loadModulePages(
         const frontmatter = parseFrontmatter(content).frontmatter
         const title = frontmatter?.title
         const type = frontmatter?.type
+        const taggedModuleIds = readTaggedModuleIds(content)
         pages.push({
           path,
           title: typeof title === "string" && title.trim() ? title : node.name.replace(/\.md$/i, ""),
           type: typeof type === "string" && type.trim() ? type.trim() : "other",
-          moduleIds: readPageModuleIds(content, catalog),
+          moduleIds: normalizeModuleIds(taggedModuleIds, catalog),
+          taggedModuleIds,
         })
       } catch { unreadable.push(path) }
     }

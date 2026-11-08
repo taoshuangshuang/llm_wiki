@@ -61,6 +61,79 @@ describe("isFetchNetworkError — cross-webview fetch failures", () => {
     expect(isFetchNetworkError(undefined)).toBe(false)
     expect(isFetchNetworkError({ message: "Load failed" })).toBe(false)
   })
+
+  it("recognises the Tauri HTTP plugin's reqwest body errors (error decoding response body)", () => {
+    // tauri-plugin-http routes through Rust reqwest; a connection dropped
+    // mid-body rejects the read with reqwest's own wording, not a TypeError.
+    expect(isFetchNetworkError(new Error("error decoding response body"))).toBe(true)
+    expect(isFetchNetworkError(new Error("error sending request for url (https://x/v1): connection reset"))).toBe(true)
+  })
+})
+
+describe("streamChat — transient transport retry", () => {
+  beforeEach(() => {
+    mockHttpFetch.mockReset()
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const erroredBody = (message: string) => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.error(new Error(message)) },
+  }), { status: 200 })
+  const completeBody = (text: string) => new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`${openAiSseToken(text)}\n\ndata: [DONE]\n\n`))
+      controller.close()
+    },
+  }), { status: 200 })
+
+  it("retries once when the body fails before any content was delivered", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(erroredBody("error decoding response body"))
+      .mockResolvedValueOnce(completeBody("合并结果"))
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const promise = streamChat(customStreamingCfg, [{ role: "user", content: "合并" }], callbacks)
+    await vi.advanceTimersByTimeAsync(1000)
+    await promise
+    expect(mockHttpFetch).toHaveBeenCalledTimes(2)
+    expect(callbacks.onError).not.toHaveBeenCalled()
+    expect(callbacks.onToken).toHaveBeenCalledWith("合并结果")
+    expect(callbacks.onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports a connection error after the retry budget is spent", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(erroredBody("error decoding response body"))
+      .mockResolvedValueOnce(erroredBody("error decoding response body"))
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const promise = streamChat(customStreamingCfg, [{ role: "user", content: "合并" }], callbacks)
+    await vi.advanceTimersByTimeAsync(1000)
+    await promise
+    expect(mockHttpFetch).toHaveBeenCalledTimes(2)
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError.mock.calls[0][0].message).toMatch(/Connection lost during streaming/)
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+  })
+
+  it("does not replay a stream that already delivered content", async () => {
+    const partial = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`${openAiSseToken("前半")}\n\n`))
+      },
+      // 第一块被读走后才断流，模拟已交付部分内容的连接中断。
+      pull(controller) { controller.error(new Error("error decoding response body")) },
+    }), { status: 200 })
+    mockHttpFetch.mockResolvedValueOnce(partial).mockResolvedValueOnce(completeBody("不应出现"))
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const promise = streamChat(customStreamingCfg, [{ role: "user", content: "合并" }], callbacks)
+    await vi.advanceTimersByTimeAsync(1000)
+    await promise
+    expect(mockHttpFetch).toHaveBeenCalledTimes(1)
+    expect(callbacks.onToken).toHaveBeenCalledWith("前半")
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("isReasoningOnlyResponseError", () => {

@@ -2,8 +2,10 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
-import { useLintRunStore } from "@/stores/lint-run-store"
-import { runStructuralLint, reviewItemsToLint, type LintResult } from "./lint"
+import { createDirectory, writeFileAtomic } from "@/commands/fs"
+import { withProjectLock } from "./project-mutex"
+import { DEFAULT_LINT_RUN, useLintRunStore } from "@/stores/lint-run-store"
+import { runStructuralLint, reviewItemsToLint, projectLintFindingsToReview, type LintResult } from "./lint"
 import { runWikiReview } from "./wiki-review"
 import { hasUsableLlm } from "./has-usable-llm"
 import { normalizePath } from "./path-utils"
@@ -17,10 +19,12 @@ const pausedRuns = new Map<string, { options: RunOptions; results: LintResult[] 
 
 const liveResults = new Map<string, LintResult[]>()
 const restores = new Map<string, Promise<void>>()
+const resetting = new Set<string>()
 
 /** 只恢复显示；已运行的会话不被磁盘旧快照覆盖，切换项目不串数据。 */
 export async function restoreLintRun(projectPath: string, options: { restoreItems?: boolean } = {}): Promise<void> {
   const path = normalizePath(projectPath)
+  if (resetting.has(path)) return
   const active = () => normalizePath(useWikiStore.getState().project?.path ?? "") === path
   if (useLintRunStore.getState().runs[path]) {
     // 页面往返不覆盖用户刚处理的列表；项目重新打开时才补回该项目的数据。
@@ -55,6 +59,30 @@ export async function restoreLintRun(projectPath: string, options: { restoreItem
 
 const controllers = new Map<string, AbortController>()
 
+/** 清除本项目检查进度和结果；保留页面、检查配置及人工审阅状态。 */
+export async function resetLintRun(projectPath: string): Promise<void> {
+  const path = normalizePath(projectPath)
+  if (controllers.has(path)) throw new Error("请先暂停检查，等待进度保存完成后再重置")
+  if (resetting.has(path)) throw new Error("正在重置检查进度")
+  resetting.add(path)
+  try {
+    await restores.get(path)
+    const run = { ...DEFAULT_LINT_RUN, runSemantic: useLintRunStore.getState().runs[path]?.runSemantic ?? false }
+    await withProjectLock(path, async () => {
+      await createDirectory(`${path}/.llm-wiki`)
+      await writeFileAtomic(`${path}/.llm-wiki/wiki-review-checkpoints.json`, JSON.stringify({ version: 1, modules: {} }))
+    })
+    await saveLintItems(path, [])
+    await saveLintRunHistory(path, run, [])
+    pausedRuns.delete(path)
+    liveResults.delete(path)
+    useLintRunStore.getState().update(path, run)
+    if (normalizePath(useWikiStore.getState().project?.path ?? "") === path) useLintStore.getState().setItems([])
+  } finally {
+    resetting.delete(path)
+  }
+}
+
 /** 显式取消目标项目；卸载、切换视图均不调用此方法。 */
 export function cancelLintRun(projectPath: string): void { controllers.get(normalizePath(projectPath))?.abort() }
 
@@ -83,7 +111,7 @@ export async function startLintRun(options: {
 
 async function executeLintRun(options: RunOptions, previousResults?: LintResult[]): Promise<void> {
   const path = normalizePath(options.project.path)
-  if (controllers.has(path)) return
+  if (controllers.has(path) || resetting.has(path)) return
   const controller = new AbortController()
   controllers.set(path, controller)
   const update = (patch: Parameters<ReturnType<typeof useLintRunStore.getState>["update"]>[1]) => {
@@ -124,7 +152,8 @@ async function executeLintRun(options: RunOptions, previousResults?: LintResult[
   try {
     const structural = await runStructuralLint(path, { signal: controller.signal, config: options.config, onProgress: (progress, total) => update({ progress: { completed: progress, total } }) })
     controller.signal.throwIfAborted()
-    results = [...structural, ...(previousResults?.filter((item) => item.reviewItem || item.type === "semantic" || item.type === "structure") ?? [])]
+    const synced = await projectLintFindingsToReview(path, structural)
+    results = [...synced, ...(previousResults?.filter((item) => item.reviewItem || item.type === "semantic" || item.type === "structure") ?? [])]
     publish()
     if (options.runSemantic && hasUsableLlm(options.llmConfig)) {
       update({ phase: "semantic", progress: null, detail: options.messages.preparing })
@@ -134,7 +163,7 @@ async function executeLintRun(options: RunOptions, previousResults?: LintResult[
           results = [...results.filter((item) => !item.reviewItem && item.type !== "semantic" && item.type !== "structure"), ...reviewItemsToLint(items)]
           publish()
         })
-      if (report.changedPages?.length && !controller.signal.aborted) results = await runStructuralLint(path, { signal: controller.signal, config: options.config })
+      if (report.changedPages?.length && !controller.signal.aborted) results = await projectLintFindingsToReview(path, await runStructuralLint(path, { signal: controller.signal, config: options.config }))
       results = [...results.filter((item) => !item.reviewItem && item.type !== "semantic" && item.type !== "structure"), ...reviewItemsToLint(report.items)]
       publish()
       if (report.status !== "complete" && !controller.signal.aborted) update({ error: report.reasons.join("；") || options.messages.incomplete })

@@ -107,11 +107,24 @@ export function normalizeWikiFileLinks(
     const name = path.slice(path.lastIndexOf("/") + 1)
     names.set(name, [...(names.get(name) ?? []), path])
   }
+  // 模型写出的引用常与实际文件名只差空格或大小写；这类差异不构成新页面，
+  // 只有在归一化后仍唯一时才改写，重名或完全不同的引用保持原样。
+  const relaxed = new Map<string, Set<string>>()
+  const remember = (key: string, path: string) => {
+    const bucket = relaxed.get(key) ?? new Set<string>()
+    bucket.add(path)
+    relaxed.set(key, bucket)
+  }
+  for (const [name, list] of names) for (const path of list) remember(comparableWikiName(name), path)
+  for (const [title, path] of titles) remember(comparableWikiName(title), canonicalPath(path))
   const resolve = (reference: string): string | undefined => {
     const path = canonicalPath(reference)
     if (paths.has(path) || (!path.includes("/") && names.has(path))) return path
     const titlePath = titles.get(reference)
-    return titlePath ? canonicalPath(titlePath) : undefined
+    if (titlePath) return canonicalPath(titlePath)
+    if (path.includes("/")) return undefined
+    const bucket = relaxed.get(comparableWikiName(reference))
+    return bucket?.size === 1 ? [...bucket][0] : undefined
   }
   return mapWikiBodyText(content, (segment) => segment.replace(
     /(?<!!)\[\[([^\]\n|]+)(\|[^\]\n]*)?\]\]/g,
@@ -128,6 +141,11 @@ export function normalizeWikiFileLinks(
       return `[[${name}${anchor}${alias}]]`
     },
   ))
+}
+
+/** 引用与文件名、标题的宽松比较键：忽略大小写与所有空白（含全角空格）。 */
+export function comparableWikiName(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s\u3000]+/g, "")
 }
 
 /** 仅转换正文普通文本，跳过 frontmatter、代码、数学公式与媒体示例。 */

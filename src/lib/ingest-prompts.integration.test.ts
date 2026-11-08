@@ -2,9 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createTempProject, fileExists, readFileRaw, realFs, writeFileRaw } from "@/test-helpers/fs-temp"
 import { parseFrontmatter } from "./frontmatter"
+import { referenceContextFromFiles } from "@/test-helpers/reference-context"
 import { streamChat } from "./llm-client"
 
 vi.mock("@/commands/fs", () => realFs)
+// 原生关系索引使用真实临时文件适配，避免 Node 环境尝试调用桌面 IPC。
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (command, args) => {
+  if (command === "wiki_reference_context") return referenceContextFromFiles(args)
+  throw new Error(`本组测试未配置原生命令：${command}`)
+}) }))
 // 本组验证生成和写入协议；统一审阅入口及串行交接由专门场景集成测试覆盖。
 vi.mock("./ingest-review", () => ({ runIngestReview: vi.fn(async (path: string, runId: string) => { await updateIngestRun(path, runId, (run) => { run.reviewRequested = false; run.reviewStatus = "complete" }) }) }))
 vi.mock("./llm-client", () => ({ streamChat: vi.fn() }))
@@ -76,6 +82,25 @@ function ingest(maxContextSize = 128000): Promise<string[]> {
 }
 
 describe("提示词可配置且默认入库行为保持不变", () => {
+  it.each([
+    ["Can't-expand-DataType-问题排查", "Cant-expand-DataType-问题排查"],
+    ['"DataType"-问题排查', "DataType-问题排查"],
+    ["DataType:定义?", "DataType-定义-"],
+    ["DataType\u200b-问题排查", "DataType-问题排查"],
+  ])("模型文件名 %s 修正后完成知识页写入并交接审阅", async (name, expected) => {
+    // 复现真实失败：模型已返回完整正文，文件名直接沿用 Can't。
+    const title = name
+    const path = `wiki/references/${expected}.md`
+    generation = `---FILE: wiki/references/${name}.md---\n---\ntype: reference\ntitle: ${JSON.stringify(title)}\n---\n# ${title}\n\nCan't expand DataType 报错时，根据实体 URI 与属性类型定位问题。\n---END FILE---`
+    const written = await ingest()
+    expect(written).toContain(path)
+    expect(await readFileRaw(`${project.path}/${path}`)).toContain(`# ${title}`)
+    expect(await fileExists(`${project.path}/wiki/references/${name}.md`)).toBe(false)
+    const [run] = await listIngestRuns(project.path)
+    expect(run).toMatchObject({ writeStatus: "complete", reviewStatus: "complete" })
+    expect(run.pages[path]).toBeDefined()
+  })
+
   it("重试旧任务时重新生成，不能重放旧规则留下的日志和合并建议", async () => {
     const legacy = await beginIngestRun(project.path, "prompt-config", "raw/sources/incoming.md", "incoming.md", "QuerySchema 查询模型说明。")
     await updateIngestRun(project.path, legacy.runId, (state) => {

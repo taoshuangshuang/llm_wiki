@@ -17,6 +17,21 @@ beforeEach(() => {
   useReviewStore.setState({ items: [] })
 })
 
+describe("源码核验结果合并", () => {
+  it("重新检查更新源码结果，晚到的旧结果不覆盖新核验或人工状态", () => {
+    const analysis = { status: "complete" as const, summary: "源码依据", checkedAt: 20, repositories: [], evidence: [], findings: [] }
+    useReviewStore.getState().addItems([makeInput()])
+    const id = useReviewStore.getState().items[0].id
+    useReviewStore.getState().resolveItem(id, "人工确认")
+    useReviewStore.getState().addItems([makeInput({ codeAnalysis: analysis })])
+    useReviewStore.getState().addItems([makeInput({ codeAnalysis: { ...analysis, checkedAt: 10 } })])
+    expect(useReviewStore.getState().items[0]).toMatchObject({ codeAnalysis: analysis, resolved: true, resolvedAction: "人工确认" })
+    const current = useReviewStore.getState().items[0]
+    useReviewStore.getState().setItems([current, { ...current, codeAnalysis: { ...analysis, checkedAt: 5 } }])
+    expect(useReviewStore.getState().items[0].codeAnalysis?.checkedAt).toBe(20)
+  })
+})
+
 describe("reviewIdFor — content-stable id", () => {
   it("is identical for the same type + normalized title (survives regeneration)", () => {
     // "Missing page: Attention" and "缺失页面: Attention" normalize equal.
@@ -374,5 +389,30 @@ describe("review-store resolveItem / dismissItem / clearResolved", () => {
     expect(useReviewStore.getState().items.filter((item) => !item.hidden)).toHaveLength(2)
     expect(useReviewStore.getState().items.find((item) => item.id === ignored.id)?.dismissed).toBe(true)
     expect(useReviewStore.getState().items.filter((item) => !item.resolved).map((item) => item.title)).toEqual(["新增问题"])
+  })
+})
+
+describe("review-store addItems — 结构事项按 logicalId 接替", () => {
+  it("同一结构问题的新证据版本到来时，旧未决事项退为历史", () => {
+    const store = useReviewStore.getState()
+    const base = { type: "structure" as const, title: "失效引用 [[旧页]]", description: "失效引用 [[旧页]]", options: [], schemaVersion: 2 as const, logicalId: "abc", affectedPages: ["wiki/a.md"] }
+    store.addItems([{ ...base, evidenceVersion: "v1" }])
+    store.addItems([{ ...base, evidenceVersion: "v2" }])
+    const items = useReviewStore.getState().items
+    expect(items).toHaveLength(2)
+    expect(items.find((item) => item.id === "review-v2-abc-v1")?.historical).toBe(true)
+    expect(items.find((item) => item.id === "review-v2-abc-v2")?.historical).toBeUndefined()
+  })
+
+  it("已解决的旧事项和非结构事项不受影响", () => {
+    const store = useReviewStore.getState()
+    const base = { type: "structure" as const, title: "失效引用 [[旧页]]", description: "失效引用 [[旧页]]", options: [], schemaVersion: 2 as const, logicalId: "abc", affectedPages: ["wiki/a.md"] }
+    store.addItems([{ ...base, evidenceVersion: "v1" }])
+    useReviewStore.getState().resolveItem("review-v2-abc-v1", "done")
+    store.addItems([{ ...base, evidenceVersion: "v2" }])
+    expect(useReviewStore.getState().items.find((item) => item.id === "review-v2-abc-v1")?.historical).toBeUndefined()
+    store.addItems([{ ...base, type: "contradiction", logicalId: "k", evidenceVersion: "v1" }])
+    store.addItems([{ ...base, type: "contradiction", logicalId: "k", evidenceVersion: "v2" }])
+    expect(useReviewStore.getState().items.find((item) => item.id === "review-v2-k-v1")?.historical).toBeUndefined()
   })
 })

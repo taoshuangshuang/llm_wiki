@@ -34,8 +34,10 @@ export function replaceModuleTags(content: string, ids: readonly string[], catal
 
 /** 视图读取时也归一化分类；未标注或标签失效的旧页面进入未分类。 */
 export function readPageModuleIds(content: string, catalog: ModuleCatalog): string[] {
-  return normalizeModuleIds(
-    pageTags(content).filter((tag) => tag.startsWith(MODULE_PREFIX)).map((tag) => tag.slice(MODULE_PREFIX.length)),
-    catalog,
-  )
+  return normalizeModuleIds(readTaggedModuleIds(content), catalog)
+}
+
+/** 保留原始模块引用，用于检查历史标签和删除影响。 */
+export function readTaggedModuleIds(content: string): string[] {
+  return pageTags(content).filter((tag) => tag.startsWith(MODULE_PREFIX)).map((tag) => tag.slice(MODULE_PREFIX.length))
 }

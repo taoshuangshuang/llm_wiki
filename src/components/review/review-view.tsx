@@ -23,6 +23,9 @@ import { reviewTypeConfig } from "@/components/review/review-type-config"
 import { isLegacyMergeNotice, isPageTargetFailure, pageTargetFailureNote } from "@/lib/merge-review"
 import { retryIngestReview } from "@/lib/ingest-review-queue"
 import { needsReviewAttention, reviewImportance } from "@/lib/review-priority"
+import { runReviewCodeAnalysis } from "@/lib/review-code-analysis"
+import { CodeAnalysisDetails } from "./code-analysis-details"
+import { ReviewDocumentLink } from "./review-document-link"
 
 export function ReviewView() {
   const { t } = useTranslation()
@@ -34,16 +37,17 @@ export function ReviewView() {
   const project = useWikiStore((s) => s.project)
   const runFilter = useWikiStore((s) => s.reviewRunFilter)
   const importance = useWikiStore((s) => s.reviewImportanceFilter)
+  const typeFilter = useWikiStore((s) => s.reviewTypeFilter)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
   const [workingReviewIds, setWorkingReviewIds] = useState<Set<string>>(() => new Set())
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
   const [queuedReviewIds, setQueuedReviewIds] = useState<Set<string>>(() => new Set())
   useEffect(() => {
-    useWikiStore.setState({ reviewImportanceFilter: "important" })
+    useWikiStore.setState({ reviewImportanceFilter: "important", reviewTypeFilter: "all" })
     setSelectedReviewIds(new Set())
   }, [project?.id, runFilter])
-  useEffect(() => { setSelectedReviewIds(new Set()) }, [importance])
+  useEffect(() => { setSelectedReviewIds(new Set()); useWikiStore.setState({ reviewTypeFilter: "all" }) }, [importance])
 
   const setReviewWorking = useCallback((id: string, working: boolean) => {
     setWorkingReviewIds((current) => {
@@ -85,6 +89,16 @@ export function ReviewView() {
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
     const item = items.find((i) => i.id === id)
+    if (action === "__verify_code__" && project && item) {
+      setReviewWorking(id, true)
+      setReviewError(id, null)
+      try {
+        const state = useWikiStore.getState()
+        await runReviewCodeAnalysis(pp, item, state.llmConfig, state.outputLanguage)
+      } catch (error) { setReviewError(id, error) }
+      finally { setReviewWorking(id, false) }
+      return
+    }
     if (action === "__recheck_merge__" && project && item?.runIds?.length) {
       setReviewWorking(id, true)
       setReviewError(id, null)
@@ -213,7 +227,16 @@ export function ReviewView() {
   const priority: Record<ReviewItem["type"], number> = { merge: 0, contradiction: 1, coverage: 2, structure: 3, "missing-page": 4, duplicate: 5, suggestion: 6, confirm: 7 }
   const scopedItems = items.filter((item) => !item.hidden && (!runFilter || item.runIds?.includes(runFilter)))
   const outsideImportantCount = items.filter(needsReviewAttention).length - scopedItems.filter(needsReviewAttention).length
-  const filteredItems = scopedItems.filter((item) => reviewImportance(item) === importance)
+  const importanceItems = scopedItems.filter((item) => reviewImportance(item) === importance)
+  // 类型过滤在重要程度之内生效；计数只统计待处理项。
+  const pendingByType = useMemo(() => {
+    const counts = new Map<ReviewItem["type"], number>()
+    for (const item of importanceItems) {
+      if (!item.resolved && !item.historical) counts.set(item.type, (counts.get(item.type) ?? 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => priority[a[0]] - priority[b[0]])
+  }, [importanceItems])
+  const filteredItems = typeFilter === "all" ? importanceItems : importanceItems.filter((item) => item.type === typeFilter)
   const pending = filteredItems
     .filter((item) => !item.resolved && !item.historical)
     .sort((a, b) => priority[a.type] - priority[b.type])
@@ -269,7 +292,7 @@ export function ReviewView() {
               侧栏角标统计整个项目，其他导入还有 {outsideImportantCount} 项重要待审事项。
             </p>}
           </div>
-          <Button size="sm" variant="outline" onClick={() => useWikiStore.setState({ reviewRunFilter: null, reviewImportanceFilter: "important" })}>
+          <Button size="sm" variant="outline" onClick={() => useWikiStore.setState({ reviewRunFilter: null, reviewImportanceFilter: "important", reviewTypeFilter: "all" })}>
             显示全部重要事项
           </Button>
         </div>
@@ -285,15 +308,25 @@ export function ReviewView() {
           </Button>
         ))}
       </div>
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">
-          {t("review.title")}
-          {pending.length > 0 && (
-            <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-              {pending.length}
-            </span>
-          )}
-        </h2>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3">
+        {pendingByType.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t("review.typeFilter", "按类型过滤")}>
+            <Button size="sm" variant={typeFilter === "all" ? "default" : "ghost"} className="h-7 px-2 text-xs"
+              aria-pressed={typeFilter === "all"}
+              onClick={() => useWikiStore.setState({ reviewTypeFilter: "all" })}>
+              {t("review.typeAll", "全部")}
+              <span className="ml-1 text-muted-foreground">{pendingByType.reduce((sum, [, count]) => sum + count, 0)}</span>
+            </Button>
+            {pendingByType.map(([type, count]) => (
+              <Button key={type} size="sm" variant={typeFilter === type ? "default" : "ghost"} className="h-7 px-2 text-xs"
+                aria-pressed={typeFilter === type}
+                onClick={() => useWikiStore.setState({ reviewTypeFilter: typeFilter === type ? "all" : type })}>
+                {t(`review.types.${type}`)}
+                <span className="ml-1 text-muted-foreground">{count}</span>
+              </Button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -476,10 +509,11 @@ function ReviewCard({
       </p>}
       {!legacyMerge && item.risk && <p className="mb-2 text-xs text-amber-600">风险：{targetFailure ? "自动合并未执行，是否适合合并仍待核实；尚未证实存在内容冲突。" : item.risk}</p>}
       {legacyMerge && <p className="mb-2 text-xs text-muted-foreground">{item.evidence?.length ? "下方为已保存的页面快照，不代表已定位到歧义原文。" : "未保存该页面的合并前后证据，不能还原当时的合并判断。"}</p>}
-      {item.evidence?.length ? <details className="mb-3 rounded border p-2 text-xs"><summary className="cursor-pointer">查看证据（{item.evidence.length}）</summary>{item.evidence.map((evidence, index) => <div key={index} className="mt-2"><p className="break-all text-muted-foreground">{evidence.path}:{evidence.startLine}-{evidence.endLine} · {evidence.snapshot?.side ?? "消费正文"} · {evidence.revision}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap">{evidence.text}</pre></div>)}</details> : null}
+      {item.evidence?.length ? <details className="mb-3 rounded border p-2 text-xs"><summary className="cursor-pointer">查看证据（{item.evidence.length}）</summary>{item.evidence.map((evidence, index) => <div key={index} className="mt-2"><p className="break-all text-muted-foreground"><ReviewDocumentLink path={evidence.path} />:{evidence.startLine}-{evidence.endLine} · {evidence.snapshot?.side ?? "消费正文"} · {evidence.revision}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap">{evidence.text}</pre></div>)}</details> : null}
+      {item.codeAnalysis && <CodeAnalysisDetails analysis={item.codeAnalysis} />}
       {item.affectedPages && item.affectedPages.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
-          {t("review.affectedPages")}: {item.affectedPages.join(", ")}
+          {t("review.affectedPages")}: {item.affectedPages.map((path, index) => <span key={path}>{index > 0 && "，"}<ReviewDocumentLink path={path} /></span>)}
         </div>
       )}
 
@@ -492,6 +526,10 @@ function ReviewCard({
           )}
           <div className="flex flex-wrap gap-1.5">
           {conversationButton}
+          {(item.type === "contradiction" || item.type === "confirm") && !!item.evidence?.length && <Button variant="outline" size="sm"
+            className="h-7 text-xs" disabled={!project || working || item.historical} onClick={() => onResolve(item.id, "__verify_code__")}>
+            {working ? "正在核验…" : item.codeAnalysis ? "重新核验源码" : "源码核验"}
+          </Button>}
           {legacyMerge && item.runIds?.length ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!project || working} onClick={() => onResolve(item.id, "__recheck_merge__")}>
             重新核查
           </Button> : null}

@@ -19,9 +19,10 @@ import { WebSearchSection } from "../sections/web-search-section"
 import { OutputSection } from "../sections/output-section"
 import { ReviewPromptSection } from "../sections/review-prompt-section"
 import { WORKFLOW_STAGES, findWorkflowNode, type WorkflowFile, type WorkflowStageId } from "./workflow-catalog"
-import { loadWorkflowDocument, saveWorkflowDocument, workflowFilePath, VARIABLE_DESCRIPTIONS, type WorkflowDocumentDraft } from "./workflow-documents"
+import { CODE_SOURCES_FILE, loadWorkflowDocument, saveWorkflowDocument, workflowFilePath, VARIABLE_DESCRIPTIONS, type WorkflowDocumentDraft } from "./workflow-documents"
 
 import { WorkflowFileEditor } from "./workflow-file-editor"
+import { BusinessModuleEditor } from "./business-module-editor"
 
 export function WorkflowSettingsView() {
   const project = useWikiStore((state) => state.project)
@@ -47,6 +48,7 @@ function WorkflowSettingsPage({ projectPath }: { projectPath?: string }) {
   }, [projectPath])
   const stage = WORKFLOW_STAGES.find((entry) => entry.id === stageId)!
   const node = stage.nodes.find((entry) => entry.id === selection[stageId]) ?? stage.nodes[0]
+  const isModuleDictionary = node.id === "business-types"
   const editable = Boolean(node.parameter || node.inline || node.files?.length)
   const affected = WORKFLOW_STAGES.flatMap((entry) => entry.nodes).filter((entry) => entry.references?.includes(node.id))
   useEffect(() => { mainPanel.current?.scrollTo({ top: 0 }) }, [node.id])
@@ -54,7 +56,8 @@ function WorkflowSettingsPage({ projectPath }: { projectPath?: string }) {
   useEffect(() => {
     if (!projectPath) return
     let stopped = false
-    const missing = (node.files ?? []).filter((file) => !documents[workflowFilePath(file)])
+    const files = [...(node.files ?? []), ...(isModuleDictionary ? [CODE_SOURCES_FILE] : [])]
+    const missing = files.filter((file) => !documents[workflowFilePath(file)])
     Promise.allSettled(missing.map(async (file) => ({ path: workflowFilePath(file), value: await loadWorkflowDocument(projectPath, file) })))
       .then((results) => {
         if (stopped) return
@@ -115,17 +118,18 @@ function WorkflowSettingsPage({ projectPath }: { projectPath?: string }) {
       const saved = await saveWorkflowDocument(projectPath, file, value)
       if (currentProject.current !== projectPath) return
       setDocuments((prev) => ({ ...prev, [path]: saved }))
-      setMessage(`${path} 已保存。${node.impact}`)
+      setMessage(`${path} 已保存。${file.document === "code-sources.json" ? "" : node.impact}`)
       await refreshProjectFileTree(projectPath, { bumpDataVersion: true })
     } catch (failure) { setError(String(failure)) }
     finally { setBusy(false) }
   }
   function hasNodeDraft(id: string) {
     const entry = findWorkflowNode(id).node
-    return Boolean(entry.parameter && dirtyParameters.has(entry.parameter)) || Boolean(entry.files?.some((file) => {
+    const files = [...(entry.files ?? []), ...(id === "business-types" ? [CODE_SOURCES_FILE] : [])]
+    return Boolean(entry.parameter && dirtyParameters.has(entry.parameter)) || files.some((file) => {
       const document = documents[workflowFilePath(file)]
       return document && document.content !== document.original
-    }))
+    })
   }
   const sectionProps = { draft, setDraft }
   const parameters = node.parameter === "network" ? <NetworkSection {...sectionProps} />
@@ -169,14 +173,14 @@ function WorkflowSettingsPage({ projectPath }: { projectPath?: string }) {
         </nav>
       </aside>
       <main ref={mainPanel} className="min-w-0 flex-1 overflow-y-auto px-5 py-5 lg:px-8">
-        <div className="mx-auto max-w-4xl space-y-5">
-          <div><p className="mb-2 text-xs text-muted-foreground">{stage.title} / {node.title}</p>
+        <div className={isModuleDictionary ? "flex h-full flex-col gap-4" : "mx-auto max-w-4xl space-y-5"}>
+          <div className="shrink-0"><p className="mb-2 text-xs text-muted-foreground">{stage.title} / {node.title}</p>
             <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">{node.title}</h2>
               {node.scope && <span className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground">{node.scope}</span>}
               {!editable && <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">程序自动执行</span>}
             </div><p className="mt-2 text-sm leading-6 text-muted-foreground">{node.description}</p>
           </div>
-          <section aria-label="节点说明" className="rounded-lg border bg-muted/20 p-4">
+          {!isModuleDictionary && <section aria-label="节点说明" className="rounded-lg border bg-muted/20 p-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div><h3 className="mb-1 text-xs font-semibold">输入</h3><p className="text-sm text-muted-foreground">{node.input}</p></div>
               <div><h3 className="mb-1 text-xs font-semibold">产出</h3><p className="text-sm text-muted-foreground">{node.output}</p></div>
@@ -186,22 +190,31 @@ function WorkflowSettingsPage({ projectPath }: { projectPath?: string }) {
               <h3 className="mb-1 font-medium">修改影响与生效方式</h3><p className="leading-6 text-muted-foreground">{node.impact}</p>
               {affected.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs"><span>同时影响 / 被以下节点引用：</span>{affected.map((entry) => <button key={entry.id} type="button" disabled={busy} className="underline underline-offset-4" onClick={() => goTo(entry.id)}>{entry.title}</button>)}</div>}
             </div>
-          </section>
+          </section>}
           {node.references?.length ? <section className="flex flex-wrap gap-2" aria-label="共用配置引用">{node.references.map((id) => {
             const target = findWorkflowNode(id)
             return <Button key={id} size="sm" variant="outline" disabled={busy} onClick={() => goTo(id)} className="h-auto whitespace-normal text-xs"><ArrowUpRight className="mr-1 h-3 w-3" />{target.stage.title} / {target.node.title}</Button>
           })}</section> : null}
           {(message || error) && <p role={error ? "alert" : "status"} className={`sticky top-0 z-10 rounded-md border bg-background p-3 text-sm shadow-sm ${error ? "border-destructive/30 text-destructive" : "text-emerald-600"}`}>{error || message}</p>}
-          {editable && <section aria-label="节点设置" className="space-y-4 border-t pt-6">
-            <div className="flex items-start gap-2.5">
+          {editable && <section aria-label="节点设置" className={isModuleDictionary ? "flex min-h-0 flex-1 flex-col" : "space-y-4 border-t pt-6"}>
+            {!isModuleDictionary && <div className="flex items-start gap-2.5">
               <Settings2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               <div><h3 className="text-base font-semibold">节点设置</h3><p className="mt-1 text-xs text-muted-foreground">在这里调整本节点使用的参数与规则；保存范围以各编辑器的按钮说明为准。</p></div>
-            </div>
+            </div>}
             {!projectPath && node.files?.length ? <p className="rounded border p-4 text-sm text-muted-foreground">打开知识库后可查看和编辑当前项目文件。</p> : null}
-            {projectPath && node.files?.map((file) => <WorkflowFileEditor key={workflowFilePath(file)} file={file}
-              value={documents[workflowFilePath(file)]} error={loadErrors[workflowFilePath(file)]} busy={busy}
-              onChange={(content) => { setDocuments((prev) => ({ ...prev, [workflowFilePath(file)]: { ...prev[workflowFilePath(file)], content } })); setMessage(""); setError("") }}
-              onReload={() => reloadFile(file)} onSave={() => saveFile(file)} />)}
+            {projectPath && node.files?.map((file) => {
+              const path = workflowFilePath(file)
+              const editorProps = { file, value: documents[path], error: loadErrors[path], busy,
+                onChange: (content: string) => { setDocuments((prev) => ({ ...prev, [path]: { ...prev[path], content } })); setMessage(""); setError("") },
+                onReload: () => reloadFile(file), onSave: () => saveFile(file) }
+              if (file.document === "business-modules.md") return <BusinessModuleEditor key={path} projectPath={projectPath} {...editorProps}
+                source={{
+                  value: documents["code-sources.json"], error: loadErrors["code-sources.json"],
+                  onChange: (content) => { setDocuments((prev) => ({ ...prev, "code-sources.json": { ...prev["code-sources.json"], content } })); setMessage(""); setError("") },
+                  onReload: () => reloadFile(CODE_SOURCES_FILE), onSave: () => saveFile(CODE_SOURCES_FILE),
+                }} />
+              return <WorkflowFileEditor key={path} {...editorProps} />
+            })}
             {parameters && <section className="rounded-lg border p-4">
               <fieldset disabled={busy || (!projectPath && ["monitoring", "filters", "processing", "scheduled-import"].includes(node.parameter!))}>{parameters}</fieldset>
               <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4">

@@ -20,6 +20,26 @@ export async function readFile(
   })
 }
 
+export interface SourceContentHit {
+  path: string
+  name: string
+  snippet: string
+  matchCount: number
+}
+
+/** 关键词内容搜索：扫描 raw/sources 下文本文件，按命中数取 top K，不做向量检索。 */
+export async function searchSourceContent(
+  projectPath: string,
+  query: string,
+  topK = 10,
+): Promise<SourceContentHit[]> {
+  return invoke<SourceContentHit[]>("search_source_content", {
+    projectPath,
+    query,
+    topK,
+  })
+}
+
 export async function writeFile(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFile", path)
   return invoke<void>("write_file", { path, contents })

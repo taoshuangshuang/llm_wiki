@@ -1,6 +1,7 @@
 pub mod claude_cli;
 mod cli_resolver;
 pub mod codex_cli;
+pub mod code_evidence;
 pub mod ebook;
 pub mod external_search;
 pub mod extract_images;

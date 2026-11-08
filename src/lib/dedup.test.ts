@@ -239,6 +239,14 @@ describe("rewriteCrossReferences", () => {
     expect(out).toBe("See [[new-slug|the old display]] here.")
   })
 
+  it("rewrites wikilinks with heading anchors, preserving anchor and alias", () => {
+    const out = rewriteCrossReferences(
+      "See [[old-slug#Usage]] and [[old-slug#Usage|usage notes]], not [[old-slug-2#Usage]].",
+      new Map([["old-slug", "new-slug"]]),
+    )
+    expect(out).toBe("See [[new-slug#Usage]] and [[new-slug#Usage|usage notes]], not [[old-slug-2#Usage]].")
+  })
+
   it("does not touch wikilinks pointing at unrelated slugs", () => {
     const input = "Both [[paos]] and [[unrelated]] are mentioned."
     const out = rewriteCrossReferences(input, new Map([["paos", "phosphorus-accumulating-organisms"]]))

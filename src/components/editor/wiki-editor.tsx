@@ -5,6 +5,7 @@ import { parseFrontmatter } from "@/lib/frontmatter"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { WikiReader } from "@/components/editor/wiki-reader"
 import { useWikiStore } from "@/stores/wiki-store"
+import { findHeadingElement } from "@/lib/wikilink-anchor"
 import { PageLinksPanel } from "@/components/editor/page-links-panel"
 import { useTranslation } from "react-i18next"
 import { buildWordDiff, findDomTextSelection, findUniqueTextSelection, normalizeEditableMarkdown, normalizeSelectionReplacement } from "@/lib/selection-edit"
@@ -14,6 +15,7 @@ import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { searchWiki, type SearchResult } from "@/lib/search"
 import { normalizePath } from "@/lib/path-utils"
 import { ImportantFileButton } from "@/components/review/file-approval-panel"
+import { FileFind } from "@/components/editor/file-find"
 
 interface EditorSelectionRequest {
   id: string
@@ -62,10 +64,15 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   const [selectionError, setSelectionError] = useState("")
   const [selectionRunning, setSelectionRunning] = useState(false)
   const readerRef = useRef<HTMLDivElement>(null)
+  const ownerRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const selectionAbortRef = useRef<AbortController | null>(null)
   const selectionRunIdRef = useRef(0)
   const project = useWikiStore((state) => state.project)
   const llmConfig = useWikiStore((state) => state.llmConfig)
+  const pendingScrollHeading = useWikiStore((state) => state.pendingScrollHeading)
+  const setPendingScrollHeading = useWikiStore((state) => state.setPendingScrollHeading)
+  const [highlightedHeading, setHighlightedHeading] = useState<{ element: HTMLElement } | null>(null)
 
   // Read mode renders frontmatter as UI plus the Markdown body. Edit mode uses
   // a plain-text Markdown editor for the full file so frontmatter can be edited
@@ -75,6 +82,32 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
     [content],
   )
   const bodySourceOffset = useMemo(() => editableMarkdownIndex(content, body), [body, content])
+
+  // A `[[page#heading]]` click sets the heading before opening this page; scroll
+  // to it once the body is rendered. Missing headings fall back to the page top.
+  useEffect(() => {
+    if (!pendingScrollHeading || mode !== "read" || !content || !filePath) return
+    if (normalizePath(pendingScrollHeading.path) !== normalizePath(filePath)) return
+    const root = readerRef.current
+    if (!root) return
+    const target = findHeadingElement(root, pendingScrollHeading.heading)
+    setHighlightedHeading(target ? { element: target } : null)
+    setPendingScrollHeading(null)
+    if (!target) return
+    target.scrollIntoView({ behavior: "auto", block: "start" })
+  }, [pendingScrollHeading, mode, content, filePath, setPendingScrollHeading])
+
+  // 高亮生命周期独立于跳转请求；清空请求不会取消样式恢复。
+  useEffect(() => {
+    const target = highlightedHeading?.element
+    if (!target) return
+    target.classList.add("rounded", "ring-2", "ring-primary", "ring-offset-2", "ring-offset-background")
+    const timer = setTimeout(() => target.classList.remove("rounded", "ring-2", "ring-primary", "ring-offset-2", "ring-offset-background"), 1800)
+    return () => {
+      clearTimeout(timer)
+      target.classList.remove("rounded", "ring-2", "ring-primary", "ring-offset-2", "ring-offset-background")
+    }
+  }, [highlightedHeading])
 
   const editableMarkdown = content
   const [draftMarkdown, setDraftMarkdown] = useState(() => normalizeEditableMarkdown(editableMarkdown))
@@ -325,6 +358,8 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
 
   return (
     <div
+      ref={ownerRef}
+      data-file-find-owner
       className="flex h-full overflow-hidden"
       tabIndex={-1}
       onKeyDownCapture={(event) => {
@@ -336,6 +371,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
       }}
     >
       <div className="relative min-w-0 flex-1 overflow-hidden">
+      <FileFind ownerRef={ownerRef} readerRef={readerRef} textareaRef={textareaRef} content={mode === "read" ? content : draftMarkdown} mode={mode} filePath={filePath} />
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
         {filePath && <ImportantFileButton filePath={filePath} />}
         {filePath && (
@@ -378,6 +414,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
       ) : (
         <div className="h-full overflow-auto p-6">
           <textarea
+            ref={textareaRef}
             aria-label={t("editor.rawMarkdownEditor")}
             value={draftMarkdown}
             onChange={(event) => {
@@ -387,6 +424,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
               onSave(next)
             }}
             onSelect={(event) => {
+              if (document.activeElement !== event.currentTarget) return
               captureSelection(
                 draftMarkdown,
                 event.currentTarget.selectionStart,

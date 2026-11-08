@@ -40,7 +40,7 @@ import { normalizeWikiFileLinks } from "./ingest-sanitize"
 
 describe("知识页 FILE 路径规范化", () => {
   // 与向量索引的页面 ID 约定保持一致，在生成入口拒绝不可索引的名称。
-  it.each(["Can't find attribute", "quoted\"name", "zero\u200bwidth", "control\u007fname"])(
+  it.each(["control\u0000name", "control\u007fname", "control\u0085name"])(
     "拒绝不可索引的文件名 %s，同时保留合法页面及其正文", (name) => {
       const path = `wiki/cases/${name}.md`
       const content = "# Can't find attribute\n正文允许单引号 '。"
@@ -50,6 +50,33 @@ describe("知识页 FILE 路径规范化", () => {
       ].join("\n"))
       expect(result.blocks).toEqual([{ path: "wiki/cases/cant-find-attribute.md", content }])
       expect(result.warnings.some((warning) => warning.includes("unsafe path"))).toBe(true)
+    },
+  )
+
+  it.each([
+    ['quoted"name', "quotedname"],
+    ["类型:定义?", "类型-定义-"],
+    ["泛型<T>|通配*", "泛型-T--通配-"],
+    ...["\u00ad", "\u061c", "\u200b", "\u200d", "\u202e", "\u2060", "\ufeff", "\ufff9", "\u{e0001}"].map((character) => [`类型${character}定义`, "类型定义"]),
+  ])("兼容文件名 %s，正文原样保留", (name, expected) => {
+    const content = `# ${name}\n正文保留原始字符。`
+    const result = parseFileBlocks(`---FILE: wiki/concepts/${name}.md---\n${content}\n---END FILE---`)
+    expect(result.blocks).toEqual([{ path: `wiki/concepts/${expected}.md`, content }])
+    expect(result.warnings).toEqual([])
+  })
+
+  it("自动修正生成文件名的英文单引号，保留标题和正文", () => {
+    const content = "---\ntitle: Can't expand DataType 问题排查\n---\n# Can't expand DataType 问题排查\n正文中的 Can't 保持原样。"
+    const result = parseFileBlocks(`---FILE: wiki/faqs/Can't-expand-DataType-问题排查.md---\n${content}\n---END FILE---`)
+    expect(result.blocks).toEqual([{ path: "wiki/faqs/Cant-expand-DataType-问题排查.md", content }])
+    expect(result.warnings).toEqual([])
+    // 原始路径仍不可直接写入；仅生成入口做可索引文件名修正。
+    expect(isSafeIngestPath("wiki/faqs/Can't-expand-DataType-问题排查.md")).toBe(false)
+  })
+
+  it.each(["wiki/../Can't.md", "wiki/faqs/'.md", "wiki/faqs/CON'.md", "/tmp/Can't.md"])(
+    "修正单引号不能放行不安全路径 %s", (path) => {
+      expect(parseFileBlocks(`---FILE: ${path}---\n正文\n---END FILE---`).blocks).toEqual([])
     },
   )
 

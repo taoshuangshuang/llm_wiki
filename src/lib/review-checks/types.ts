@@ -1,6 +1,7 @@
 /** 独立检查的材料与结果协议；不携带入库任务、审阅 UI 或持久化状态。 */
 import type { LlmConfig } from "@/stores/wiki-store"
 import type { ReviewEvidence } from "@/stores/review-store"
+import type { CodeConflictAnalysis } from "../code-conflict-types"
 
 /** 诊断接收器由执行入口注入；检查不依赖日志文件或入库日志实例。 */
 export interface ReviewCheckLog { record: (event: string, data?: unknown, stage?: string) => void }
@@ -19,6 +20,7 @@ export interface ReviewFinding {
   risk?: string
   evidence: ReviewEvidence[]
   affectedPages: string[]
+  codeAnalysis?: CodeConflictAnalysis
 }
 export type ReviewCheckScope = Omit<ReviewMaterial, "text">
 

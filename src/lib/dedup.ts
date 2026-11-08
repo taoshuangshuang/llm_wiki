@@ -459,11 +459,11 @@ export function rewriteCrossReferences(
 ): string {
   let out = content
 
-  // 1. Wikilinks in the body — both [[slug]] and [[slug|alias]].
+  // 1. Wikilinks in the body — [[slug]], [[slug#heading]] and [[slug|alias]].
   for (const [oldSlug, newSlug] of slugRedirects) {
     const escaped = escapeRegex(oldSlug)
-    const re = new RegExp(`\\[\\[${escaped}(\\|[^\\]]+)?\\]\\]`, "g")
-    out = out.replace(re, (_match, alias) => `[[${newSlug}${alias ?? ""}]]`)
+    const re = new RegExp(`\\[\\[${escaped}(#[^\\]|]*)?(\\|[^\\]]+)?\\]\\]`, "g")
+    out = out.replace(re, (_match, anchor, alias) => `[[${newSlug}${anchor ?? ""}${alias ?? ""}]]`)
   }
 
   // 2. & 3. `related` field — re-parse and rewrite.
@@ -548,8 +548,8 @@ export function rewriteIndexMd(
 function lineRefersToSlug(line: string, slugs: Set<string>): boolean {
   for (const slug of slugs) {
     const escaped = escapeRegex(slug)
-    // Wikilink form: [[slug]] or [[slug|alias]]
-    if (new RegExp(`\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`).test(line)) return true
+    // Wikilink form: [[slug]], [[slug#heading]] or [[slug|alias]]
+    if (new RegExp(`\\[\\[${escaped}(#[^\\]|]*)?(\\|[^\\]]*)?\\]\\]`).test(line)) return true
     // Markdown link form: [...](slug.md) or [...](path/slug.md)
     if (new RegExp(`\\(([^)]*\\/)?${escaped}\\.md\\)`).test(line)) return true
     // Bare slug.md mention (rare but seen in raw lists)

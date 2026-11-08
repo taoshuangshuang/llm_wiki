@@ -17,6 +17,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 }))
 vi.mock("@/components/ui/button", () => ({ Button: ({ children, ...props }: React.ComponentProps<"button">) => createElement("button", props, children) }))
 import { ReviewView } from "./review-view"
+import { readFile } from "@/commands/fs"
 import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { retryIngestReview } from "@/lib/ingest-review-queue"
@@ -25,6 +26,24 @@ import { IconSidebar } from "@/components/layout/icon-sidebar"
 let view: ReactTestRenderer | undefined
 afterEach(async () => { if (view) await act(async () => view!.unmount()); view = undefined; vi.unstubAllGlobals() })
 describe("审阅研究入口移除", () => {
+  it("相关文档可打开预览，读取失败保留审阅页并提示", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+    useWikiStore.setState({ project: { id: "p", name: "项目", path: "/project" }, activeView: "review", reviewRunFilter: null })
+    useReviewStore.setState({ items: [{ id: "links", type: "coverage", title: "文档核查", description: "核查",
+      affectedPages: ["wiki/topics/业务对象 (Biz Object).md", "faqs/已删除.md"], options: [], resolved: false, createdAt: 0 }] })
+    vi.mocked(readFile).mockResolvedValueOnce("# 业务对象").mockRejectedValueOnce(new Error("missing"))
+    await act(async () => { view = create(createElement(ReviewView)) })
+    const link = (path: string) => view!.root.findAllByType("button").find((node) => node.props.title === `打开文档：${path}`)!
+    // 完整路径中的中文、空格和括号保持原样，预览关闭后回到审阅。
+    await act(async () => { await link("wiki/topics/业务对象 (Biz Object).md").props.onClick() })
+    expect(readFile).toHaveBeenCalledWith("/project/wiki/topics/业务对象 (Biz Object).md")
+    expect(useWikiStore.getState()).toMatchObject({ activeView: "wiki", fileContent: "# 业务对象", previewReturnView: "review" })
+    useWikiStore.getState().closePreview()
+    await act(async () => { await link("faqs/已删除.md").props.onClick() })
+    expect(useWikiStore.getState().activeView).toBe("review")
+    expect(view!.root.findByProps({ role: "alert" }).children.join("")).toContain("无法打开文档")
+  })
+
   it("导入筛选的重要数为0但侧栏有4项时，点击侧栏应打开全部重要事项", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
     useWikiStore.setState({ project: { id: "p", name: "项目", path: "/project" }, activeView: "review", reviewRunFilter: "run-selected" })

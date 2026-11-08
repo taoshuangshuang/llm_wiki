@@ -357,7 +357,7 @@ function backendToolToAgentStep(event: BackendAgentToolEvent, index: number) {
 function normalizeBackendToolName(tool: string) {
   const normalized = tool.split(".").join("_")
   if (normalized === "wiki_search") return "wiki_search" as const
-  if (normalized === "wiki_read_page") return "project_file_read" as const
+  if (normalized === "wiki_read_page" || normalized === "wiki_read_pages") return "project_file_read" as const
   if (normalized === "wiki_move_page" || normalized === "wiki_list_pages") return "project_files" as const
   if (normalized === "source_read_file") return "project_file_read" as const
   if (normalized === "wiki_delete_page") return "project_files" as const

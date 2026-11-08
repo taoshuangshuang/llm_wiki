@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, GitBranch } from "lucide-react"
+import { fileExists, readFile } from "@/commands/fs"
 import { useTranslation } from "react-i18next"
 import { loadProjectSchema } from "@/lib/project-schema"
 import { getWikiTypeStyle, FALLBACK_TYPE_STYLE } from "@/lib/wiki-type-style"
@@ -9,6 +10,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { parseWikiSchemaRouting } from "@/lib/wiki-schema"
 import { parseModuleCatalog, type BusinessModule, type ModuleCatalog } from "./catalog"
 import { loadModulePages, pagesForModule, type ModulePage } from "./pages"
+import { readCodeSourcesConfig, resolveCodeBinding, type CodeSourcesConfig } from "./code-sources"
 
 /** 独立业务模块视角，复用项目变更通知及既有页面预览能力。 */
 export function BusinessModuleTree() {
@@ -23,6 +25,7 @@ export function BusinessModuleTree() {
   const [typeOrder, setTypeOrder] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [warning, setWarning] = useState("")
+  const [codeSources, setCodeSources] = useState<CodeSourcesConfig>()
 
   useEffect(() => {
     let active = true
@@ -31,6 +34,7 @@ export function BusinessModuleTree() {
     setPages([])
     setTypeOrder([])
     setWarning("")
+    setCodeSources(undefined)
     if (!project) { setLoading(false); return }
     setLoading(true)
     void (async () => {
@@ -44,6 +48,13 @@ export function BusinessModuleTree() {
         setCatalog(next)
         setTypeOrder(Object.keys(parseWikiSchemaRouting(schema).typeDirs))
         if (!next) return
+        try {
+          const sourcePath = project.path.replace(/\/+$/, "") + "/code-sources.json"
+          const source = readCodeSourcesConfig(await fileExists(sourcePath) ? await readFile(sourcePath) : "")
+          if (active) setCodeSources(source)
+        } catch (error) {
+          if (active) setWarning("源码绑定读取失败：" + String(error))
+        }
         const result = await loadModulePages(project.path, next, undefined, controller.signal)
         if (!active) return
         setPages(result.pages)
@@ -66,10 +77,11 @@ export function BusinessModuleTree() {
     })
   }
 
-  function renderNode(node: BusinessModule, depth: number) {
+  function renderNode(node: BusinessModule, depth: number, ancestors: string[] = []) {
     const count = pagesForModule(node, pages).length
     const nodePages = pagesForModule(node, pages, typeOrder, "direct")
     const isExpanded = expanded.has(node.id)
+    const binding = codeSources && resolveCodeBinding(codeSources, node.id, ancestors)
     return (
       <div key={node.id}>
         <div className="flex items-center" style={{ paddingLeft: depth * 12 }}>
@@ -78,12 +90,16 @@ export function BusinessModuleTree() {
             className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-accent">
             {isExpanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
             <span className="truncate">{node.name}</span>
+            {binding?.repository && <span aria-label="已关联源码仓库" className="shrink-0 text-muted-foreground"
+              title={binding.repository + (binding.repositorySource === node.id ? " · 直接绑定" : " · 继承自 " + catalog?.byId.get(binding.repositorySource ?? "")?.name)}>
+              <GitBranch size={12} aria-hidden="true" />
+            </span>}
             <span className="ml-auto pr-2 text-muted-foreground">{count}</span>
           </button>
         </div>
         {isExpanded && (
           <>
-            {node.children.map((child) => renderNode(child, depth + 1))}
+            {node.children.map((child) => renderNode(child, depth + 1, [...ancestors, node.id]))}
             <div style={{ paddingLeft: (depth + 1) * 12 }}>
               {!count && <p className="p-2 text-xs text-muted-foreground">{t("sidebar.moduleEmpty")}</p>}
               {nodePages.map((page) => {

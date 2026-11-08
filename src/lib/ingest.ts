@@ -31,7 +31,7 @@ import { DEFAULT_INGEST_PROMPTS, initializeProjectIngestPrompts, loadProjectInge
 import { withProjectLock } from "@/lib/project-mutex"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { makeQuerySlug } from "@/lib/wiki-filename"
-import { wikiPageIdError } from "@/lib/wiki-page-id"
+import { normalizeGeneratedWikiFileName, wikiPageIdError } from "@/lib/wiki-page-id"
 import type { FileNode } from "@/types/wiki"
 import {
   extractAndSaveSourceImages,
@@ -466,8 +466,12 @@ const FENCE_LINE = /^\s{0,3}(```+|~~~+)/
 
 /** FILE 块仅承载 Markdown 页面；先保留安全校验，再统一后缀，兼容中文和含点号的标题。 */
 function normalizeIngestPagePath(path: string): string {
-  if (!isSafeIngestPath(path)) return path
-  return `${path.replace(/\.md$/i, "")}.md`
+  // 控制字符直接拒绝；只修正文件名标点和不可见格式字符，目录、标题和正文不变。
+  if (/[\x00-\x1f\x7f-\x9f]/.test(path)) return path
+  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
+  const normalized = path.slice(0, slash + 1) + normalizeGeneratedWikiFileName(path.slice(slash + 1))
+  if (!isSafeIngestPath(normalized)) return path
+  return `${normalized.replace(/\.md$/i, "")}.md`
 }
 
 /**
@@ -2394,13 +2398,18 @@ async function writeFileBlocks(
 
 /** 同名与消歧后缀均参与召回，避免关闭向量检索后再次入库不断生成 -2、-3 重复页。 */
 function isIngestNameCandidate(path: string, requestedPath: string): boolean {
-  const name = getFileName(path).toLowerCase()
-  const requested = getFileName(requestedPath).toLowerCase()
+  const name = comparableIngestName(getFileName(path))
+  const requested = comparableIngestName(getFileName(requestedPath))
   if (name === requested) return true
   const suffix = name.match(/-(\d+)\.md$/)?.[1]
   if (!suffix || Number(suffix) < 2) return false
   const allocated = disambiguatedIngestPath(requestedPath, `-${suffix}`)
-  return allocated !== null && getFileName(allocated).toLowerCase() === name
+  return allocated !== null && comparableIngestName(getFileName(allocated)) === name
+}
+
+/** 模型生成的标题常在同一名称上出现空格、全角空格或大小写差异；召回时视为同名，由主题核对决定是否合并。 */
+export function comparableIngestName(name: string): string {
+  return name.toLowerCase().replace(/[\s\u3000]+/g, "")
 }
 
 /** 生成同名消歧路径；召回与分配共用截短规则，长路径也能在后续入库中找回。 */
@@ -2415,12 +2424,12 @@ function disambiguatedIngestPath(requestedPath: string, suffix: string): string 
 
 /** 全部候选不同主题时保留原目录，分配全库唯一文件名；后缀计入页面 ID 长度限制。 */
 function allocateIndependentIngestPath(requestedPath: string, knownPaths: string[]): string {
-  const occupied = new Set(knownPaths.map((path) => getFileName(path).toLowerCase()))
-  if (!occupied.has(getFileName(requestedPath).toLowerCase())) return requestedPath
+  const occupied = new Set(knownPaths.map((path) => comparableIngestName(getFileName(path))))
+  if (!occupied.has(comparableIngestName(getFileName(requestedPath)))) return requestedPath
   for (let sequence = 2; sequence <= occupied.size + 2; sequence++) {
     const candidate = disambiguatedIngestPath(requestedPath, `-${sequence}`)
     if (!candidate) break
-    if (!occupied.has(getFileName(candidate).toLowerCase())) return candidate
+    if (!occupied.has(comparableIngestName(getFileName(candidate)))) return candidate
   }
   throw new Error("无法为不同主题的同名页面分配安全文件名，请到待审阅处理")
 }

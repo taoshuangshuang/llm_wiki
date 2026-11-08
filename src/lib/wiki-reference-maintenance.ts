@@ -7,6 +7,7 @@ import { mapWikiBodyText, normalizeWikiFileLinks } from "./ingest-sanitize"
 import { commitIngestPage, contentRevision } from "./ingest-run"
 import type { RetrievalRelation } from "./evidence-retrieval"
 import type { PageCheckIssue, ReviewMaterial } from "./review-checks/types"
+import { normalizeHeadingAnchor, splitWikilinkTarget } from "./wikilink-anchor"
 
 interface ReferencePage { path: string; names: string[] }
 export interface ReferenceContext { pages: ReferencePage[]; affectedPaths: string[]; relations: RetrievalRelation[] }
@@ -32,7 +33,7 @@ function resolver(pages: ReferencePage[]) {
   }
 }
 
-/** 章节支持原始标题和常见 Markdown 锚点；代码示例中的标题不算章节。 */
+/** 章节支持原始标题和常见 Markdown 锚点，比较忽略大小写、空白与全半角差异；代码示例中的标题不算章节。 */
 export function hasWikiSection(content: string, anchor: string): boolean {
   let decoded = anchor
   try { decoded = decodeURIComponent(anchor) } catch { /* 非法编码按原文比较。 */ }
@@ -49,11 +50,12 @@ export function hasWikiSection(content: string, anchor: string): boolean {
     const slug = title.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-")
     const count = counts.get(slug) ?? 0
     counts.set(slug, count + 1)
-    headings.add(title)
-    headings.add(count ? `${slug}-${count}` : slug)
+    headings.add(normalizeHeadingAnchor(title))
+    headings.add(normalizeHeadingAnchor(count ? `${slug}-${count}` : slug))
   }
   if (decoded.startsWith("^")) return visible.split("\n").some((line) => line.trimEnd().endsWith(` ${decoded}`) || line.trim() === decoded)
-  return headings.has(decoded) || headings.has(decoded.toLowerCase())
+  const key = normalizeHeadingAnchor(decoded)
+  return !!key && headings.has(key)
 }
 
 /** 未知目标保留原文；正文和 related 使用同一套引用提取约定。 */
@@ -136,24 +138,22 @@ export async function maintainWikiReferences(
   return changed
 }
 
-/** 格式阶段仅报告缺页、重名或缺章节，不能生成占位页或请求模型补写。 */
+/** 格式阶段仅报告缺页或重名，不能生成占位页或请求模型补写；页面存在但章节缺失时视为整页链接，不计失效。 */
 export async function inspectWikiReferences(projectPath: string, pages: ReviewMaterial[]): Promise<PageCheckIssue[]> {
   if (!pages.length) return []
   const context = await referenceContext(projectPath, pages.map((page) => page.path))
   const resolve = resolver(context.pages)
-  const contents = new Map(pages.map((page) => [page.path, page.text]))
   const issues: PageCheckIssue[] = []
+  const reported = new Set<string>()
   for (const page of pages) for (const reference of wikiReferences(page.text)) {
-    const hash = reference.indexOf("#")
-    const name = hash < 0 ? reference : reference.slice(0, hash)
+    const { page: name, anchor } = splitWikilinkTarget(reference)
+    if (!name && anchor) continue // 当前页锚点按现状处理。
     const target = resolve(reference, page.path) ?? resolve(name, page.path)
-    let reason: string | undefined
-    if (!target) reason = "目标页面不存在或名称不唯一"
-    else if (hash >= 0 && !resolve(reference, "")) {
-      if (!contents.has(target)) contents.set(target, await readFile(`${projectPath}/${target}`))
-      if (!hasWikiSection(contents.get(target)!, reference.slice(hash + 1))) reason = "目标章节不存在"
-    }
-    if (reason) issues.push({ kind: "structure", manual: true, description: `失效引用 [[${reference}]]：${reason}`, sourceEvidence: "", pageEvidence: reference, pages: [page.path] })
+    if (target) continue
+    const key = `${page.path}\0${name}`
+    if (reported.has(key)) continue
+    reported.add(key)
+    issues.push({ kind: "structure", manual: true, description: `失效引用 [[${name}]]：目标页面不存在或名称不唯一`, sourceEvidence: "", pageEvidence: name, pages: [page.path] })
   }
   return issues
 }
